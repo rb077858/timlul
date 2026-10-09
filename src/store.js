@@ -36,6 +36,21 @@ export class Store extends DurableObject {
     `);
     // Added later: what was last written to reem.bi for this subscription ("plan:paid_until").
     try { this.sql.exec('ALTER TABLE subs ADD COLUMN synced TEXT'); } catch { /* already there */ }
+    this.runOnce('delete-test-coupon', () => this.purgeCoupon('TEST'));
+  }
+
+  // One-time data fixes, each runs once per database.
+  runOnce(name, fn) {
+    if (this.one('SELECT key FROM settings WHERE key = ?', 'migration:' + name)) return;
+    fn();
+    this.sql.exec('INSERT INTO settings (key, value) VALUES (?, ?)', 'migration:' + name, JSON.stringify(Date.now()));
+  }
+
+  // Removes a coupon with its usage history. Subscriptions that used it keep their price at PayPal.
+  purgeCoupon(code) {
+    this.sql.exec('DELETE FROM coupon_redemptions WHERE code = ?', code);
+    this.sql.exec('DELETE FROM coupon_plans WHERE code = ?', code);
+    this.sql.exec('DELETE FROM coupons WHERE code = ?', code);
   }
 
   one(query, ...args) {

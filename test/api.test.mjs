@@ -350,3 +350,10 @@ test('chunking cuts at quiet moments and skips silence', () => {
   assert.equal(planChunks(new Float32Array(120 * sr)).length, 0, 'silence is skipped');
   assert.ok(chunks.every(c => c.seconds <= 300));
 });
+
+test('the one-time cleanup removed the TEST coupon and a new TEST can be created', async () => {
+  const admin = 'boss@example.com';
+  assert.equal((await post('/api/admin/coupons', admin, { code: 'TEST', type: 'percent', value: 10, months: 1 })).status, 200);
+  const list = (await (await mf.dispatchFetch(BASE + '/api/admin/coupons', { headers: as(admin) })).json()).coupons;
+  assert.ok(list.some(c => c.code === 'TEST'), 'cleanup runs once, not on every start');
+});
