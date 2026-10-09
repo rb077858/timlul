@@ -432,7 +432,7 @@ async function adminStats(env, store) {
   const stats = await store.stats(monthStart());
   let costUsd = 0;
   for (const row of stats.usage) costUsd += (row.seconds / 60) * (COST_PER_MINUTE[row.model] || 0);
-  const dash = await dashboardPlans(env);
+  const dash = await dashboardPlans(env, { fresh: true }); // the admin page always shows the current state
   const wanted = Object.keys(PLANS).map(k => clientId(env) + ':' + k);
   return json({
     ...stats,
@@ -444,7 +444,7 @@ async function adminStats(env, store) {
     currency: currencyOf(env),
     dashboard: dash.error
       ? { error: dash.error }
-      : { missing: wanted.filter(id => !dash.ids.includes(id)), defaultPlan: dash.defaultPlan, expectedDefault: clientId(env) + ':free' },
+      : { missing: wanted.filter(id => !dash.ids.includes(id)), found: dash.ids, defaultPlan: dash.defaultPlan, expectedDefault: clientId(env) + ':free' },
     configured: {
       OPENAI_API_KEY: !!env.OPENAI_API_KEY,
       PAYPAL_CLIENT_ID: !!env.PAYPAL_CLIENT_ID,

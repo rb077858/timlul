@@ -60,9 +60,9 @@ let plansCache = { at: 0, env: null, data: null };
 
 // The site's plans as defined in the dashboard (for minutes/features), cached for 5 minutes.
 // Returns { plans: { key: {credits?, strong?, email?} }, ids: [...] } or { error }.
-export async function dashboardPlans(env) {
+export async function dashboardPlans(env, { fresh = false } = {}) {
   if (!env.SSO_SITE_KEY) return { error: 'SSO_SITE_KEY חסר' };
-  if (plansCache.data && plansCache.env === env.SSO_SITE_KEY && Date.now() - plansCache.at < 300000) return plansCache.data;
+  if (!fresh && plansCache.data && plansCache.env === env.SSO_SITE_KEY && Date.now() - plansCache.at < 300000) return plansCache.data;
   let data;
   try {
     const res = await fetch(ssoUrl(env) + '/api/site/plans', { headers: { 'x-site-key': env.SSO_SITE_KEY } });

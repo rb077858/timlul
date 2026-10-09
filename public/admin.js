@@ -133,7 +133,10 @@ function renderDashboard(s) {
     return;
   }
   box.append(cell('p', '✓ מחובר. מנויים ששילמו מופיעים בדשבורד reem.bi עם תאריך תפוגה.', 'ok'));
-  if (d.missing.length) box.append(cell('p', 'חסרות בדשבורד התוכניות: ' + d.missing.join(', '), 'bad'));
+  if (d.missing.length) {
+    box.append(cell('p', 'חסרות בדשבורד התוכניות: ' + d.missing.join(', '), 'bad'));
+    box.append(cell('p', 'התוכניות שנמצאו בדשבורד: ' + (d.found.join(', ') || 'אין'), 'muted small'));
+  }
   if (d.defaultPlan !== d.expectedDefault) box.append(cell('p', `מומלץ לבחור בדשבורד את ${d.expectedDefault} כתוכנית ברירת המחדל`, 'muted small'));
   const list = Object.entries(s.plans).map(([k, p]) => `${p.name}: ${p.credits} דקות${p.strong ? '' : ', בלי מודל מדויק'}${p.email ? '' : ', בלי מייל'}`);
   box.append(cell('p', 'הגדרות פעילות: ' + list.join(' · '), 'muted small'));
