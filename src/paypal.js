@@ -57,30 +57,48 @@ export function cancelSubscription(env, id, reason) {
   return paypal(env, 'POST', '/v1/billing/subscriptions/' + encodeURIComponent(id) + '/cancel', { reason });
 }
 
-export async function createProductAndPlans(env, plans, currency) {
+export async function createProduct(env) {
   const product = await paypal(env, 'POST', '/v1/catalogs/products', {
     name: 'תמלול אודיו ווידאו',
     description: 'מנוי חודשי לשירות תמלול',
     type: 'SERVICE',
     category: 'SOFTWARE',
   });
+  return product.id;
+}
+
+export async function createPlan(env, { productId, name, description, cycles }) {
+  const plan = await paypal(env, 'POST', '/v1/billing/plans', {
+    product_id: productId,
+    name,
+    description,
+    status: 'ACTIVE',
+    billing_cycles: cycles,
+    payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 },
+  });
+  return plan.id;
+}
+
+export function regularCycles(price, currency) {
+  return [{
+    frequency: { interval_unit: 'MONTH', interval_count: 1 },
+    tenure_type: 'REGULAR',
+    sequence: 1,
+    total_cycles: 0,
+    pricing_scheme: { fixed_price: { value: String(price), currency_code: currency } },
+  }];
+}
+
+export async function createProductAndPlans(env, plans, currency) {
+  const productId = await createProduct(env);
   const created = {};
   for (const [key, plan] of plans) {
-    const p = await paypal(env, 'POST', '/v1/billing/plans', {
-      product_id: product.id,
+    created[key] = await createPlan(env, {
+      productId,
       name: 'תמלול - ' + plan.name,
       description: plan.credits + ' דקות תמלול בחודש',
-      status: 'ACTIVE',
-      billing_cycles: [{
-        frequency: { interval_unit: 'MONTH', interval_count: 1 },
-        tenure_type: 'REGULAR',
-        sequence: 1,
-        total_cycles: 0,
-        pricing_scheme: { fixed_price: { value: String(plan.price), currency_code: currency } },
-      }],
-      payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 },
+      cycles: regularCycles(plan.price, currency),
     });
-    created[key] = p.id;
   }
-  return { productId: product.id, plans: created };
+  return { productId, plans: created };
 }

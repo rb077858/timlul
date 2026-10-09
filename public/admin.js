@@ -9,6 +9,7 @@ async function init() {
   auth = window.ReemAuth.init({ clientId: config.ssoClientId });
   $('loginBtn').onclick = () => auth.login();
   $('ppSetup').onclick = setupPayPal;
+  bindCouponForm();
   auth.onChange(user => {
     if (user === undefined) return;
     $('loginBtn').hidden = !!user;
@@ -23,8 +24,10 @@ function message(text) {
   $('msg').hidden = !text;
 }
 
-async function api(path, method = 'GET') {
-  const res = await fetch(path, { method, headers: { Authorization: 'Bearer ' + await auth.getToken() } });
+async function api(path, method = 'GET', body) {
+  const headers = { Authorization: 'Bearer ' + await auth.getToken() };
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || 'שגיאה ' + res.status);
   return data;
@@ -66,6 +69,11 @@ async function load() {
       st.append(cell('div', `${s.plans[k]?.name || k}: ${s.paypal.prices[k]} ${s.paypal.currency} · ${id}`, 'muted small'));
     }
   }
+
+  renderDashboard(s);
+  plansCache = s.plans;
+  renderPlanChecks();
+  renderCoupons((await api('/api/admin/coupons')).coupons);
 
   const stats = $('stats');
   stats.textContent = '';
@@ -110,5 +118,140 @@ async function setupPayPal() {
     message('שגיאה: ' + e.message);
   } finally {
     $('ppSetup').disabled = false;
+  }
+}
+
+// ---------- reem.bi ----------
+
+function renderDashboard(s) {
+  const box = $('dashState');
+  box.textContent = '';
+  const d = s.dashboard;
+  if (d.error) {
+    box.append(cell('p', '✗ ' + d.error, 'bad'));
+    box.append(cell('p', 'בלי החיבור האתר עובד, אבל המנויים לא יופיעו בדשבורד, וקודי מתנה לא יעבדו. ראו שלב 7 במדריך.', 'muted small'));
+    return;
+  }
+  box.append(cell('p', '✓ מחובר. מנויים ששילמו מופיעים בדשבורד reem.bi עם תאריך תפוגה.', 'ok'));
+  if (d.missing.length) box.append(cell('p', 'חסרות בדשבורד התוכניות: ' + d.missing.join(', '), 'bad'));
+  if (d.defaultPlan !== d.expectedDefault) box.append(cell('p', `מומלץ לבחור בדשבורד את ${d.expectedDefault} כתוכנית ברירת המחדל`, 'muted small'));
+  const list = Object.entries(s.plans).map(([k, p]) => `${p.name}: ${p.credits} דקות${p.strong ? '' : ', בלי מודל מדויק'}${p.email ? '' : ', בלי מייל'}`);
+  box.append(cell('p', 'הגדרות פעילות: ' + list.join(' · '), 'muted small'));
+}
+
+// ---------- coupons ----------
+
+let plansCache = {};
+const TYPE_HELP = {
+  percent: ['אחוז הנחה', 'לכמה חודשים (0 = לתמיד)', 'הלקוח משלם מחיר מוזל בחודשים הראשונים, ואחר כך מחיר רגיל. 0 חודשים = הנחה לכל תקופת המנוי.'],
+  amount: ['הנחה בשקלים לחודש', 'לכמה חודשים (0 = לתמיד)', 'כמה שקלים יורדים מהמחיר החודשי. אם ההנחה גדולה מהמחיר, החודשים האלה חינם.'],
+  trial: [null, 'כמה חודשים חינם', 'הלקוח נרשם ב-PayPal עם כרטיס, לא משלם בחודשים האלה, ואחר כך מחויב במחיר הרגיל (אלא אם ביטל).'],
+  gift: [null, 'כמה חודשים', 'הלקוח מקבל את התוכנית בלי לשלם ובלי כרטיס. בסוף התקופה חוזר לחינם. מופיע בדשבורד reem.bi.'],
+};
+
+function bindCouponForm() {
+  const form = $('couponForm');
+  form.type.onchange = updateCouponForm;
+  $('randCode').onclick = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    form.code.value = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => chars[b % chars.length]).join('');
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      const plan_keys = [...form.querySelectorAll('input[name=plan]:checked')].map(i => i.value);
+      const expires = form.expires.value ? new Date(form.expires.value + 'T23:59:59').getTime() : null;
+      const r = await api('/api/admin/coupons', 'POST', {
+        code: form.code.value, type: form.type.value, value: form.value.value, months: form.months.value,
+        plan_keys, max_uses: form.max_uses.value, expires_at: expires, note: form.note.value,
+      });
+      renderCoupons(r.coupons);
+      message('✓ הקוד נוצר');
+      form.code.value = '';
+      form.note.value = '';
+    } catch (err) {
+      message('שגיאה: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  updateCouponForm();
+}
+
+function updateCouponForm() {
+  const form = $('couponForm');
+  const [valueLabel, monthsLabel, help] = TYPE_HELP[form.type.value];
+  $('valueField').hidden = !valueLabel;
+  if (valueLabel) $('valueLabel').textContent = valueLabel;
+  $('monthsLabel').textContent = monthsLabel;
+  $('couponHelp').textContent = help;
+  if (form.type.value !== 'percent' && form.type.value !== 'amount' && Number(form.months.value) < 1) form.months.value = 1;
+  renderPlanChecks();
+}
+
+function renderPlanChecks() {
+  const box = $('planChecks');
+  const gift = $('couponForm').type.value === 'gift';
+  $('plansLabel').textContent = gift ? 'איזו תוכנית מקבלים במתנה' : 'לאילו תוכניות (בלי סימון = כולן)';
+  box.textContent = '';
+  for (const [key, p] of Object.entries(plansCache)) {
+    if (!p.price) continue;
+    const label = document.createElement('label');
+    label.className = 'small';
+    label.style.display = 'flex';
+    label.style.gap = '6px';
+    label.style.alignItems = 'center';
+    const input = document.createElement('input');
+    input.type = gift ? 'radio' : 'checkbox';
+    input.name = 'plan';
+    input.value = key;
+    label.append(input, document.createTextNode(`${p.name} (${p.price})`));
+    box.append(label);
+  }
+}
+
+function renderCoupons(list) {
+  const table = $('couponTable');
+  table.textContent = '';
+  if (!list.length) { table.append(cell('caption', 'עוד אין קודים', 'muted small')); return; }
+  const head = document.createElement('tr');
+  ['קוד', 'מה הוא נותן', 'שימושים', 'בתוקף עד', 'מצב', ''].forEach(h => head.append(cell('th', h)));
+  table.append(head);
+  for (const c of list) {
+    const tr = document.createElement('tr');
+    const plans = c.type === 'gift' ? '' : ' · ' + c.plan_keys.map(k => plansCache[k]?.name || k).join(', ');
+    const label = cell('td', c.label + plans);
+    if (c.note) label.title = c.note;
+    tr.append(
+      cell('td', c.code),
+      label,
+      cell('td', c.uses + (c.max_uses ? ' / ' + c.max_uses : '')),
+      cell('td', c.expires_at ? new Date(c.expires_at).toLocaleDateString('he-IL') : 'ללא'),
+      cell('td', c.active ? 'פעיל' : 'מושבת', c.active ? 'ok' : 'bad'),
+    );
+    const actions = document.createElement('td');
+    const link = cell('button', 'קישור', 'btn btn-ghost btn-sm');
+    link.onclick = () => {
+      const url = location.origin + '/?coupon=' + encodeURIComponent(c.code);
+      navigator.clipboard.writeText(url).then(() => message('הקישור הועתק: ' + url), () => message(url));
+    };
+    const toggle = cell('button', c.active ? 'השבתה' : 'הפעלה', 'btn btn-ghost btn-sm');
+    toggle.onclick = async () => renderCoupons((await api(`/api/admin/coupons/${c.code}/${c.active ? 'disable' : 'enable'}`, 'POST')).coupons);
+    actions.append(link, toggle);
+    if (!c.uses) {
+      const del = cell('button', 'מחיקה', 'btn btn-ghost btn-sm');
+      del.onclick = async () => {
+        if (!confirm(`למחוק את ${c.code}?`)) return;
+        try { renderCoupons((await api('/api/admin/coupons/' + c.code, 'DELETE')).coupons); }
+        catch (e) { message(e.message); }
+      };
+      actions.append(del);
+    }
+    actions.style.display = 'flex';
+    actions.style.gap = '6px';
+    tr.append(actions);
+    table.append(tr);
   }
 }

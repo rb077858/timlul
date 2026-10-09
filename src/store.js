@@ -22,7 +22,20 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS emails (email TEXT, ts INTEGER);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS plan_map (paypal_plan_id TEXT PRIMARY KEY, plan_key TEXT);
+      CREATE TABLE IF NOT EXISTS coupons (
+        code TEXT PRIMARY KEY, type TEXT, value REAL, months INTEGER, plan_keys TEXT,
+        max_uses INTEGER, uses INTEGER DEFAULT 0, expires_at INTEGER, active INTEGER DEFAULT 1,
+        note TEXT, created_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS coupon_redemptions (
+        code TEXT, email TEXT, ts INTEGER, sub_id TEXT, PRIMARY KEY (code, email)
+      );
+      CREATE TABLE IF NOT EXISTS coupon_plans (
+        paypal_plan_id TEXT PRIMARY KEY, code TEXT, plan_key TEXT, env TEXT, price REAL, currency TEXT
+      );
     `);
+    // Added later: what was last written to reem.bi for this subscription ("plan:paid_until").
+    try { this.sql.exec('ALTER TABLE subs ADD COLUMN synced TEXT'); } catch { /* already there */ }
   }
 
   one(query, ...args) {
@@ -51,6 +64,10 @@ export class Store extends DurableObject {
       s.email, s.sub_id, s.plan_key, s.status, s.period_start ?? null, s.paid_until ?? null,
       Date.now(), Date.now());
     return this.getSub(s.email);
+  }
+
+  markSynced(email, signature) {
+    this.sql.exec('UPDATE subs SET synced = ? WHERE email = ?', signature, email);
   }
 
   findSubOwner(subId) {
@@ -105,6 +122,76 @@ export class Store extends DurableObject {
 
   planKeyFor(paypalPlanId) {
     return this.one('SELECT plan_key FROM plan_map WHERE paypal_plan_id = ?', paypalPlanId)?.plan_key || null;
+  }
+
+  // ---------- coupons ----------
+
+  couponRow(row) {
+    return row && { ...row, plan_keys: JSON.parse(row.plan_keys || '[]'), active: !!row.active };
+  }
+
+  getCoupon(code) {
+    return this.couponRow(this.one('SELECT * FROM coupons WHERE code = ?', code));
+  }
+
+  listCoupons() {
+    return this.sql.exec('SELECT * FROM coupons ORDER BY created_at DESC').toArray().map(r => this.couponRow(r));
+  }
+
+  createCoupon(c) {
+    if (this.one('SELECT code FROM coupons WHERE code = ?', c.code)) return false;
+    this.sql.exec(
+      `INSERT INTO coupons (code, type, value, months, plan_keys, max_uses, uses, expires_at, active, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)`,
+      c.code, c.type, c.value, c.months, JSON.stringify(c.plan_keys), c.max_uses, c.expires_at, c.note, Date.now());
+    return true;
+  }
+
+  setCouponActive(code, active) {
+    this.sql.exec('UPDATE coupons SET active = ? WHERE code = ?', active ? 1 : 0, code);
+  }
+
+  deleteCoupon(code) {
+    const c = this.one('SELECT uses FROM coupons WHERE code = ?', code);
+    if (!c) return 'not_found';
+    if (c.uses > 0) return 'used';
+    this.sql.exec('DELETE FROM coupons WHERE code = ?', code);
+    this.sql.exec('DELETE FROM coupon_plans WHERE code = ?', code);
+    return 'ok';
+  }
+
+  redemption(code, email) {
+    return this.one('SELECT * FROM coupon_redemptions WHERE code = ? AND email = ?', code, email);
+  }
+
+  // Records that `email` used `code`. Returns false if they already used it for something else.
+  redeem(code, email, subId) {
+    const prev = this.redemption(code, email);
+    if (prev) return !!subId && prev.sub_id === subId; // re-activating the same subscription is fine
+    this.sql.exec('INSERT INTO coupon_redemptions (code, email, ts, sub_id) VALUES (?, ?, ?, ?)', code, email, Date.now(), subId || null);
+    this.sql.exec('UPDATE coupons SET uses = uses + 1 WHERE code = ?', code);
+    return true;
+  }
+
+  // Undo a gift redemption whose plan could not be written to reem.bi.
+  unredeem(code, email) {
+    this.sql.exec('DELETE FROM coupon_redemptions WHERE code = ? AND email = ?', code, email);
+    this.sql.exec('UPDATE coupons SET uses = MAX(0, uses - 1) WHERE code = ?', code);
+  }
+
+  couponPlans(code, env) {
+    return this.sql.exec('SELECT * FROM coupon_plans WHERE code = ? AND env = ?', code, env).toArray();
+  }
+
+  saveCouponPlan(row) {
+    this.sql.exec(
+      'INSERT OR REPLACE INTO coupon_plans (paypal_plan_id, code, plan_key, env, price, currency) VALUES (?, ?, ?, ?, ?, ?)',
+      row.paypal_plan_id, row.code, row.plan_key, row.env, row.price, row.currency);
+    this.mapPlan(row.paypal_plan_id, row.plan_key);
+  }
+
+  couponForPlan(paypalPlanId) {
+    return this.one('SELECT code, plan_key FROM coupon_plans WHERE paypal_plan_id = ?', paypalPlanId);
   }
 
   stats(monthStart) {

@@ -142,15 +142,20 @@
     <section id="plans" class="plans-section">
       <h2 class="section-title">תוכניות ומחירים</h2>
       <p class="muted center">מנוי חודשי, אפשר לבטל בכל רגע. התשלום מאובטח דרך PayPal (גם בכרטיס אשראי, בלי חשבון PayPal).</p>
+      <div class="coupon">
+        <input id="couponInput" type="text" placeholder="יש לך קוד קופון?" dir="ltr" autocomplete="off" aria-label="קוד קופון">
+        <button id="couponBtn" class="btn btn-ghost">החלה</button>
+      </div>
+      <p id="couponMsg" class="notice center" hidden></p>
       <div id="plansGrid" class="plans"></div>
-      <p class="muted small center">המכסה מתחדשת בכל חודש. דקות שלא נוצלו לא עוברות לחודש הבא. במודל המדויק כל דקת הקלטה נספרת כ-<span class="strong-weight">2</span> דקות.</p>
+      <p class="muted small center">המכסה מתחדשת בכל חודש. דקות שלא נוצלו לא עוברות לחודש הבא. המודל המדויק ושליחה במייל זמינים בתוכניות בתשלום, ובמודל המדויק כל דקת הקלטה נספרת כ-<span class="strong-weight">2</span> דקות.</p>
       <p id="planNote" class="notice center" hidden></p>
     </section>
 
     <section class="faq">
       <h2 class="section-title">שאלות נפוצות</h2>
       <details><summary>אילו קבצים אפשר להעלות?</summary><p>כמעט כל קובץ אודיו או וידאו: MP3, M4A, WAV, OGG, MP4, MOV, WEBM ועוד. הקובץ מעובד בדפדפן, ורק השמע (בלי התמונה) נשלח לתמלול. לסרטונים ארוכים מאוד (מעל שעה) בטלפון, עדיף להעלות קובץ אודיו.</p></details>
-      <details><summary>מה ההבדל בין "מהיר" ל"מדויק"?</summary><p>שניהם מודלי תמלול של OpenAI. המדויק מתמודד טוב יותר עם רעשי רקע, מבטאים ומונחים מקצועיים, ולכן כל דקה בו נספרת כפול.</p></details>
+      <details><summary>מה ההבדל בין "מהיר" ל"מדויק"?</summary><p>שניהם מודלי תמלול של OpenAI. המדויק מתמודד טוב יותר עם רעשי רקע, מבטאים ומונחים מקצועיים. הוא זמין בתוכניות בתשלום, וכל דקה בו נספרת כפול.</p></details>
       <details><summary>האם הקבצים שלי נשמרים?</summary><p>לא. השמע נשלח לתמלול ונמחק, והטקסט לא נשמר בשרת שלנו. רק בדפדפן שלכם נשמרים התמלולים האחרונים, ואפשר למחוק אותם.</p></details>
       <details><summary>איך מבטלים מנוי?</summary><p>בכרטיס "התוכנית שלך" לוחצים "ביטול מנוי". התוכנית ממשיכה לעבוד עד סוף החודש ששולם.</p></details>
     </section>

@@ -10,6 +10,8 @@ let me = null;
 let currentFile = null;
 let busy = false;
 let paypalLoaded = null;
+let coupon = null; // the applied coupon from /api/coupon/check
+const PENDING_COUPON = 'timlul:coupon';
 
 // ---------- startup ----------
 
@@ -36,6 +38,7 @@ async function init() {
   $('heroLogin').onclick = () => auth.login();
   $('logoutBtn').onclick = () => auth.logout();
   bindWorkspace();
+  bindCoupon();
 }
 
 function renderStaticConfig() {
@@ -64,6 +67,7 @@ async function onUser(user) {
   $('accountLink').href = auth.accountUrl();
   await refreshMe();
   renderHistory();
+  applyPendingCoupon();
 }
 
 // ---------- API ----------
@@ -96,8 +100,7 @@ async function refreshMe() {
     return;
   }
   renderQuota();
-  const signature = me.plan.key + ':' + (me.subscription?.status || '');
-  if (signature !== plansSignature) renderPlans();
+  if (planSignature() !== plansSignature) renderPlans();
   $('adminLink').hidden = !me.isAdmin;
 }
 
@@ -121,19 +124,40 @@ function renderQuota() {
   const sub = me.subscription;
   const active = sub && sub.status === 'ACTIVE' && me.plan.key !== 'free';
   let detail = `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
-  if (active) detail += `חידוש ב-${fmtDate(me.periodEnd)}`;
+  if (me.plan.source === 'dashboard') {
+    if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
+    detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
+  } else if (active) detail += `חידוש ב-${fmtDate(me.periodEnd)}`;
   else if (sub && sub.status === 'CANCELLED' && me.plan.key !== 'free') detail += `המנוי בוטל ופעיל עד ${fmtDate(me.periodEnd)}`;
   else detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
   $('quotaDetail').textContent = detail;
   $('cancelBtn').hidden = !active;
+  applyFeatures();
+}
+
+// The free plan has no accurate model and no email.
+function applyFeatures() {
+  const strong = document.querySelector('input[name="model"][value="strong"]');
+  const canStrong = !!me?.features?.strong;
+  strong.disabled = !canStrong;
+  strong.closest('.model').classList.toggle('locked', !canStrong);
+  if (!canStrong && strong.checked) document.querySelector('input[name="model"][value="fast"]').checked = true;
+  $('strongNote').textContent = canStrong
+    ? `המודל החזק ביותר. דקה = ${config.strongWeight} דקות מהמכסה`
+    : '🔒 זמין בתוכניות בתשלום';
+  $('emailBtn').textContent = me?.features?.email ? 'שליחה למייל שלי' : '🔒 שליחה למייל שלי';
 }
 
 // ---------- plans & PayPal ----------
 
 let plansSignature = null;
 
+function planSignature() {
+  return me ? [me.plan.key, me.subscription?.status || '', coupon?.code || ''].join(':') : null;
+}
+
 function renderPlans() {
-  plansSignature = me ? me.plan.key + ':' + (me.subscription?.status || '') : null;
+  plansSignature = planSignature();
   const grid = $('plansGrid');
   grid.textContent = '';
   const currency = config.currency === 'ILS' ? '₪' : config.currency + ' ';
@@ -145,15 +169,22 @@ function renderPlans() {
     card.className = 'plan' + (plan.key === 'pro' ? ' featured' : '') + (me && me.plan.key === plan.key ? ' current' : '');
     if (plan.key === 'pro') card.append(el('span', 'plan-badge', 'הכי משתלם'));
     card.append(el('h3', '', plan.name));
-    const price = el('div', 'price', currency + plan.price);
+    const offer = coupon?.offers?.[plan.key] && !(me && me.plan.key === plan.key) ? coupon.offers[plan.key] : null;
+    const price = el('div', 'price', currency + (offer ? offer.firstPrice : plan.price));
+    if (offer) price.prepend(el('s', 'old-price', currency + plan.price));
     if (plan.price) price.append(el('small', '', ' / חודש'));
     card.append(price);
+    if (offer) {
+      card.append(el('div', 'offer', offer.months
+        ? `${coupon.label}, אחר כך ${currency}${offer.regularPrice} לחודש`
+        : coupon.label));
+    }
 
     const ul = document.createElement('ul');
     const hours = plan.credits >= 120 ? ` (${+(plan.credits / 60).toFixed(1)} שעות)` : '';
     ul.append(el('li', '', `${plan.credits.toLocaleString('he-IL')} דקות תמלול בחודש${hours}`));
-    ul.append(el('li', '', 'מודל מהיר ומודל מדויק'));
-    ul.append(el('li', '', 'הורדה כ-TXT ושליחה למייל'));
+    ul.append(el('li', '', plan.strong ? 'מודל מהיר ומודל מדויק' : 'מודל מהיר בלבד'));
+    ul.append(el('li', '', plan.email ? 'הורדה כ-TXT ושליחה למייל' : 'הורדה כ-TXT'));
     if (plan.price) ul.append(el('li', '', `כ-${(plan.price / plan.credits * 100).toFixed(0)} אג׳ לדקה`));
     card.append(ul);
 
@@ -169,7 +200,7 @@ function renderPlans() {
       } else if (!config.paypal || !plan.paypalPlanId) {
         slot.append(el('div', 'muted small center', 'ההרשמה תיפתח בקרוב'));
       } else {
-        renderPayPalButton(slot, plan, activeKey && subActive);
+        renderPayPalButton(slot, offer ? offer.paypalPlanId : plan.paypalPlanId, activeKey && subActive);
       }
     }
     grid.append(card);
@@ -203,7 +234,7 @@ function loadPayPal() {
   return paypalLoaded;
 }
 
-async function renderPayPalButton(slot, plan, switching) {
+async function renderPayPalButton(slot, paypalPlanId, switching) {
   let paypal;
   try { paypal = await loadPayPal(); }
   catch (e) { slot.append(el('div', 'muted small center', e.message)); return; }
@@ -211,13 +242,14 @@ async function renderPayPalButton(slot, plan, switching) {
   paypal.Buttons({
     style: { layout: 'vertical', shape: 'rect', label: 'subscribe', height: 44, tagline: false },
     createSubscription: (data, actions) => actions.subscription.create({
-      plan_id: plan.paypalPlanId,
+      plan_id: paypalPlanId,
       custom_id: me.user.email,
       application_context: { shipping_preference: 'NO_SHIPPING', user_action: 'SUBSCRIBE_NOW' },
     }),
     onApprove: async data => {
       try {
         me = await api('/api/subscription/activate', { method: 'POST', json: { subscriptionId: data.subscriptionID } });
+        clearCoupon();
         renderQuota();
         renderPlans();
         toast('המנוי הופעל! תודה 🎉');
@@ -256,7 +288,14 @@ function bindWorkspace() {
     try { await navigator.clipboard.writeText($('resultText').value); toast('הועתק'); }
     catch { $('resultText').select(); document.execCommand('copy'); toast('הועתק'); }
   };
-  $('emailBtn').onclick = sendEmail;
+  $('emailBtn').onclick = () => {
+    if (!me?.features?.email) {
+      toast('שליחה במייל זמינה בתוכניות בתשלום');
+      $('plans').scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    sendEmail();
+  };
   $('cancelBtn').onclick = cancelSubscription;
 
   window.addEventListener('beforeunload', e => { if (busy) { e.preventDefault(); e.returnValue = ''; } });
@@ -427,6 +466,84 @@ async function cancelSubscription() {
   } catch (e) {
     toast(e.message);
   }
+}
+
+// ---------- coupons ----------
+
+function bindCoupon() {
+  const fromUrl = new URLSearchParams(location.search).get('coupon');
+  if (fromUrl) {
+    $('couponInput').value = fromUrl;
+    try { sessionStorage.setItem(PENDING_COUPON, fromUrl); } catch { /* ignore */ }
+  }
+  $('couponBtn').onclick = () => applyCoupon($('couponInput').value);
+  $('couponInput').onkeydown = e => { if (e.key === 'Enter') applyCoupon($('couponInput').value); };
+}
+
+function applyPendingCoupon() {
+  let code = null;
+  try { code = sessionStorage.getItem(PENDING_COUPON); sessionStorage.removeItem(PENDING_COUPON); } catch { /* ignore */ }
+  if (code) {
+    $('couponInput').value = code;
+    applyCoupon(code);
+  }
+}
+
+function couponMessage(text, isError) {
+  const box = $('couponMsg');
+  box.textContent = text;
+  box.className = 'notice center' + (isError ? ' notice-error' : '');
+  box.hidden = !text;
+}
+
+async function applyCoupon(code) {
+  code = (code || '').trim();
+  if (!code) return;
+  if (!me) {
+    try { sessionStorage.setItem(PENDING_COUPON, code); } catch { /* ignore */ }
+    auth?.login();
+    return;
+  }
+  $('couponBtn').disabled = true;
+  try {
+    coupon = await api('/api/coupon/check', { method: 'POST', json: { code } });
+    if (coupon.type === 'gift') {
+      couponMessage('🎁 ' + coupon.label);
+      const btn = el('button', 'btn btn-primary', 'הפעלת המתנה');
+      btn.style.marginInlineStart = '10px';
+      btn.onclick = redeemGift;
+      $('couponMsg').append(btn);
+    } else {
+      couponMessage('✓ ' + coupon.label + '. המחירים המעודכנים מופיעים בכרטיסים.');
+    }
+    renderPlans();
+  } catch (e) {
+    coupon = null;
+    couponMessage(e.message, true);
+    renderPlans();
+  } finally {
+    $('couponBtn').disabled = false;
+  }
+}
+
+async function redeemGift(e) {
+  e.currentTarget.disabled = true;
+  try {
+    me = await api('/api/coupon/redeem', { method: 'POST', json: { code: coupon.code } });
+    clearCoupon();
+    renderQuota();
+    renderPlans();
+    toast('המתנה הופעלה! 🎉');
+    $('workspace').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    couponMessage(err.message, true);
+  }
+}
+
+function clearCoupon() {
+  coupon = null;
+  $('couponInput').value = '';
+  couponMessage('');
 }
 
 // ---------- local history ----------
