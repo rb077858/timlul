@@ -8,9 +8,9 @@ export const CURRENCY_DEFAULT = 'ILS';
 
 export const PLANS = {
   free:     { name: 'חינם',   price: 0,  credits: 10 },
-  basic:    { name: 'בסיסי',  price: 19, credits: 180 },
-  pro:      { name: 'מקצועי', price: 49, credits: 600 },
-  business: { name: 'עסקי',   price: 99, credits: 1500 },
+  basic:    { name: 'בסיסי',  price: 9,  credits: 180 },
+  pro:      { name: 'מקצועי', price: 19, credits: 600 },
+  business: { name: 'עסקי',   price: 39, credits: 1500 },
 };
 
 export const PAID_PLAN_KEYS = Object.keys(PLANS).filter(k => PLANS[k].price > 0);

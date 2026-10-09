@@ -142,17 +142,17 @@ test('failed transcription is not charged', async () => {
 test('admin, PayPal setup, subscribe, switch and cancel', async () => {
   assert.equal((await mf.dispatchFetch(BASE + '/api/admin/stats', { headers: as('a@example.com') })).status, 403);
   const setup = await (await mf.dispatchFetch(BASE + '/api/admin/paypal-setup', { method: 'POST', headers: as('boss@example.com') })).json();
-  assert.deepEqual(setup.plans, { basic: 'P-19', pro: 'P-49', business: 'P-99' });
+  assert.deepEqual(setup.plans, { basic: 'P-9', pro: 'P-19', business: 'P-39' });
   const c = await (await mf.dispatchFetch(BASE + '/api/config')).json();
   assert.equal(c.paypal.clientId, 'cid');
-  assert.equal(c.plans.find(p => p.key === 'pro').paypalPlanId, 'P-49');
+  assert.equal(c.plans.find(p => p.key === 'pro').paypalPlanId, 'P-19');
 
   const user = 'a@example.com';
   const now = new Date().toISOString();
   const next = new Date(Date.now() + 30 * 86400000).toISOString();
-  subs['I-1'] = { id: 'I-1', status: 'ACTIVE', plan_id: 'P-19', custom_id: user, start_time: now,
+  subs['I-1'] = { id: 'I-1', status: 'ACTIVE', plan_id: 'P-9', custom_id: user, start_time: now,
     billing_info: { next_billing_time: next, last_payment: { time: now } } };
-  subs['I-2'] = { ...subs['I-1'], id: 'I-2', plan_id: 'P-49', custom_id: 'other@example.com', billing_info: { ...subs['I-1'].billing_info } };
+  subs['I-2'] = { ...subs['I-1'], id: 'I-2', plan_id: 'P-19', custom_id: 'other@example.com', billing_info: { ...subs['I-1'].billing_info } };
 
   const activate = (id, email = user) => mf.dispatchFetch(BASE + '/api/subscription/activate', {
     method: 'POST', headers: { ...as(email), 'Content-Type': 'application/json' }, body: JSON.stringify({ subscriptionId: id }),
