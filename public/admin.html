@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ניהול תמלול</title>
+  <meta name="robots" content="noindex">
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/"><span class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6"/></svg></span>ניהול</a>
+      <div class="auth-area">
+        <span id="who" class="muted small"></span>
+        <button id="loginBtn" class="btn btn-primary btn-sm" hidden>התחברות</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" style="padding-top:24px">
+    <p id="msg" class="notice" hidden></p>
+
+    <div id="panel" hidden>
+      <div class="card">
+        <h2>הגדרות שחסרות</h2>
+        <div id="configured" class="kv"></div>
+      </div>
+
+      <div class="card">
+        <h2>PayPal (<span id="ppEnv"></span>)</h2>
+        <div id="ppState"></div>
+        <button id="ppSetup" class="btn btn-primary" style="margin-top:12px">יצירת תוכניות ב-PayPal</button>
+        <p class="muted small">לוחצים פעם אחת אחרי ההגדרה, ושוב רק אם שיניתם מחירים בקוד. מנויים קיימים ממשיכים לעבוד.</p>
+      </div>
+
+      <div class="card">
+        <h2>החודש</h2>
+        <div id="stats" class="kv"></div>
+      </div>
+
+      <div class="card">
+        <h2>מנויים</h2>
+        <div class="table-wrap"><table id="subs"></table></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://login.reembir.com/sdk.js"></script>
+  <script type="module" src="admin.js"></script>
+</body>
+</html>

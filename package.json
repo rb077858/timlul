@@ -1,0 +1,16 @@
+{
+  "name": "timlul",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir dist",
+    "test": "wrangler deploy --dry-run --outdir dist > /dev/null && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "miniflare": "^4.20260730.0",
+    "wrangler": "^4.0.0"
+  }
+}
