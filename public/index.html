@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>תמלול אודיו ווידאו</title>
+  <meta name="description" content="העלו קובץ אודיו או וידאו וקבלו תמלול מדויק כקובץ טקסט או במייל.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6"/></svg>
+        </span>
+        תמלול
+      </a>
+      <nav class="topnav">
+        <a href="#plans">מחירים</a>
+        <div id="authArea" class="auth-area">
+          <span class="muted small" id="authLoading">טוען…</span>
+          <button id="loginBtn" class="btn btn-primary btn-sm" hidden>התחברות</button>
+          <div id="userMenu" class="user-menu" hidden>
+            <a id="accountLink" class="user-name" href="#" target="_blank" rel="noopener"></a>
+            <a id="adminLink" class="small" href="/admin.html" hidden>ניהול</a>
+            <button id="logoutBtn" class="btn btn-ghost btn-sm">התנתקות</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>תמלול אודיו ווידאו, <span class="accent">בכמה דקות</span></h1>
+      <p class="lead">מעלים הקלטה, שיחה, הרצאה או סרטון. מקבלים טקסט מוכן להורדה כקובץ TXT או ישירות למייל. עובד בעברית ובעוד עשרות שפות.</p>
+      <div id="heroCta" class="hero-cta" hidden>
+        <button id="heroLogin" class="btn btn-primary btn-lg">התחברות והתחלה בחינם</button>
+        <span class="muted small">10 דקות חינם בכל חודש, בלי כרטיס אשראי</span>
+      </div>
+      <p id="sdkError" class="notice notice-error" hidden>מערכת ההתחברות לא זמינה כרגע. נסו לרענן את הדף בעוד כמה דקות.</p>
+    </section>
+
+    <section id="workspace" hidden>
+      <div class="card quota">
+        <div class="quota-head">
+          <div>
+            <div class="muted small">התוכנית שלך</div>
+            <div class="plan-name" id="planName">—</div>
+          </div>
+          <div class="quota-num"><b id="remaining">0</b> <span class="muted">דקות נותרו</span></div>
+        </div>
+        <div class="bar"><div class="bar-fill" id="quotaBar"></div></div>
+        <div class="quota-foot muted small">
+          <span id="quotaDetail"></span>
+          <button id="cancelBtn" class="link-btn" hidden>ביטול מנוי</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>1. בחירת קובץ</h2>
+        <label id="drop" class="drop">
+          <input id="fileInput" type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.opus,.flac,.aac,.mp4,.mov,.webm,.mkv">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <span class="drop-title">לחצו לבחירת קובץ או גררו לכאן</span>
+          <span class="muted small">MP3, M4A, WAV, MP4, MOV, WEBM ועוד</span>
+        </label>
+        <div id="fileInfo" class="file-info" hidden></div>
+
+        <h2>2. הגדרות</h2>
+        <div class="options">
+          <fieldset class="models">
+            <legend class="sr-only">מודל</legend>
+            <label class="model">
+              <input type="radio" name="model" value="fast" checked>
+              <span class="model-body">
+                <b>מהיר</b>
+                <span class="muted small">טוב להקלטות ברורות. דקה = דקה אחת מהמכסה</span>
+              </span>
+            </label>
+            <label class="model">
+              <input type="radio" name="model" value="strong">
+              <span class="model-body">
+                <b>מדויק</b>
+                <span class="muted small" id="strongNote">המודל החזק ביותר. דקה = 2 דקות מהמכסה</span>
+              </span>
+            </label>
+          </fieldset>
+          <div class="row">
+            <label class="field">
+              <span>שפת ההקלטה</span>
+              <select id="lang">
+                <option value="he">עברית</option>
+                <option value="en">אנגלית</option>
+                <option value="ar">ערבית</option>
+                <option value="ru">רוסית</option>
+                <option value="fr">צרפתית</option>
+                <option value="es">ספרדית</option>
+                <option value="">זיהוי אוטומטי</option>
+              </select>
+            </label>
+            <label class="field grow">
+              <span>מילים ושמות חשובים <span class="muted">(לא חובה)</span></span>
+              <input id="hint" type="text" maxlength="400" placeholder="למשל: שמות משתתפים, מונחים מקצועיים">
+            </label>
+          </div>
+        </div>
+
+        <button id="startBtn" class="btn btn-primary btn-lg btn-block" disabled>תמלול</button>
+        <div id="progress" class="progress" hidden>
+          <div class="bar"><div class="bar-fill" id="progressBar"></div></div>
+          <div class="muted small" id="progressText"></div>
+        </div>
+        <p id="workError" class="notice notice-error" hidden></p>
+      </div>
+
+      <div id="resultCard" class="card" hidden>
+        <div class="result-head">
+          <h2>התמלול</h2>
+          <span class="muted small" id="resultMeta"></span>
+        </div>
+        <textarea id="resultText" rows="14" dir="auto"></textarea>
+        <div class="actions">
+          <button id="downloadBtn" class="btn btn-primary">הורדה כקובץ TXT</button>
+          <button id="emailBtn" class="btn btn-ghost">שליחה למייל שלי</button>
+          <button id="copyBtn" class="btn btn-ghost">העתקה</button>
+        </div>
+        <p id="resultNote" class="notice" hidden></p>
+      </div>
+
+      <div id="historyCard" class="card" hidden>
+        <h2>תמלולים אחרונים <span class="muted small">(נשמרים רק בדפדפן הזה)</span></h2>
+        <ul id="historyList" class="history"></ul>
+      </div>
+    </section>
+
+    <section id="plans" class="plans-section">
+      <h2 class="section-title">תוכניות ומחירים</h2>
+      <p class="muted center">מנוי חודשי, אפשר לבטל בכל רגע. התשלום מאובטח דרך PayPal (גם בכרטיס אשראי, בלי חשבון PayPal).</p>
+      <div id="plansGrid" class="plans"></div>
+      <p class="muted small center">המכסה מתחדשת בכל חודש. דקות שלא נוצלו לא עוברות לחודש הבא. במודל המדויק כל דקת הקלטה נספרת כ-<span class="strong-weight">2</span> דקות.</p>
+      <p id="planNote" class="notice center" hidden></p>
+    </section>
+
+    <section class="faq">
+      <h2 class="section-title">שאלות נפוצות</h2>
+      <details><summary>אילו קבצים אפשר להעלות?</summary><p>כמעט כל קובץ אודיו או וידאו: MP3, M4A, WAV, OGG, MP4, MOV, WEBM ועוד. הקובץ מעובד בדפדפן, ורק השמע (בלי התמונה) נשלח לתמלול. לסרטונים ארוכים מאוד (מעל שעה) בטלפון, עדיף להעלות קובץ אודיו.</p></details>
+      <details><summary>מה ההבדל בין "מהיר" ל"מדויק"?</summary><p>שניהם מודלי תמלול של OpenAI. המדויק מתמודד טוב יותר עם רעשי רקע, מבטאים ומונחים מקצועיים, ולכן כל דקה בו נספרת כפול.</p></details>
+      <details><summary>האם הקבצים שלי נשמרים?</summary><p>לא. השמע נשלח לתמלול ונמחק, והטקסט לא נשמר בשרת שלנו. רק בדפדפן שלכם נשמרים התמלולים האחרונים, ואפשר למחוק אותם.</p></details>
+      <details><summary>איך מבטלים מנוי?</summary><p>בכרטיס "התוכנית שלך" לוחצים "ביטול מנוי". התוכנית ממשיכה לעבוד עד סוף החודש ששולם.</p></details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap muted small">© תמלול · התמלול נעשה באמצעות OpenAI · התשלום דרך PayPal</div>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="https://login.reembir.com/sdk.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
