@@ -1,20 +1,10 @@
-import { PLANS, PAID_PLAN_KEYS, STRONG_WEIGHT, COST_PER_MINUTE, CURRENCY_DEFAULT, modelIds, rank } from './plans.js';
-import {
-  paypalEnv, getSubscription, cancelSubscription, createProductAndPlans, createPlan,
-} from './paypal.js';
+import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, modelIds } from './plans.js';
 import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
 import { sendTranscriptEmail } from './mail.js';
-import {
-  authenticate, forgetUser, ssoPlan, pickFeatures, isUnlimited, planDefs, dashboardPlans, setDashboardPlan, clientId,
-} from './sso.js';
-import {
-  validateCoupon, couponOffer, couponLabel, couponProblem, billingCycles, normalizeCode,
-} from './coupons.js';
+import { authenticate, userPlan, clientId } from './sso.js';
 
 export { Store } from './store.js';
 
-const HOUR = 3600000;
-const DAY = 24 * HOUR;
 const EMAILS_PER_DAY = 20;
 
 export default {
@@ -53,9 +43,9 @@ async function route(request, env, url) {
   const path = url.pathname;
   const method = request.method;
 
-  if (path === '/api/config' && method === 'GET') return json(await publicConfig(env));
+  if (path === '/api/config' && method === 'GET') return json(publicConfig(env));
 
-  const user = await authenticate(request, env);
+  const user = await authenticate(request, env, { fresh: url.searchParams.get('fresh') === '1' });
   if (!user) return json({ error: 'unauthorized', message: 'צריך להתחבר' }, 401);
   const store = getStore(env);
   await store.touchUser(user.email, user.name);
@@ -63,30 +53,10 @@ async function route(request, env, url) {
   if (path === '/api/me' && method === 'GET') return json(await accountState(env, store, user));
   if (path === '/api/transcribe' && method === 'POST') return transcribe(request, env, store, user, url);
   if (path === '/api/email' && method === 'POST') return email(request, env, store, user);
-  if (path === '/api/subscription/activate' && method === 'POST') return activate(request, env, store, user);
-  if (path === '/api/subscription/cancel' && method === 'POST') return cancel(env, store, user);
-  if (path === '/api/coupon/check' && method === 'POST') return checkCoupon(request, env, store, user);
-  if (path === '/api/coupon/redeem' && method === 'POST') return redeemGift(request, env, store, user);
 
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
-    if (path === '/api/admin/stats' && method === 'GET') return json(await adminData(env, store));
     if (path === '/api/admin/manifest' && method === 'GET') return json(await adminManifest(env, store, url));
-    if ((path === '/api/admin/paypal-setup' || path === '/api/admin/actions/paypal-setup') && method === 'POST') {
-      return adminPaypalSetup(env, store);
-    }
-    if (path === '/api/admin/coupons' && method === 'GET') return json({ coupons: await couponList(env, store) });
-    if (path === '/api/admin/coupons' && method === 'POST') return adminCreateCoupon(request, env, store);
-    const m = path.match(/^\/api\/admin\/coupons\/([A-Za-z0-9_-]+)(\/(enable|disable))?$/);
-    if (m && method === 'POST' && m[3]) {
-      await store.setCouponActive(m[1], m[3] === 'enable');
-      return json({ coupons: await couponList(env, store) });
-    }
-    if (m && method === 'DELETE' && !m[2]) {
-      const r = await store.deleteCoupon(m[1]);
-      if (r === 'used') return json({ error: 'used', message: 'אי אפשר למחוק קוד שכבר נוצל. אפשר להשבית אותו' }, 400);
-      return json({ coupons: await couponList(env, store) });
-    }
   }
   return json({ error: 'not_found' }, 404);
 }
@@ -108,8 +78,6 @@ function isAdmin(env, user) {
   return (env.ADMIN_EMAILS || '').toLowerCase().split(/[\s,;]+/).filter(Boolean).includes(user.email);
 }
 
-const currencyOf = env => env.CURRENCY || CURRENCY_DEFAULT;
-
 function monthStart(now = Date.now()) {
   const d = new Date(now);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
@@ -120,263 +88,44 @@ function nextMonthStart(now = Date.now()) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
 }
 
-function addMonths(ts, n = 1) {
-  const d = new Date(ts);
-  d.setUTCMonth(d.getUTCMonth() + n);
-  return d.getTime();
-}
-
 async function readJson(request) {
   try { return await request.json(); } catch { return {}; }
 }
 
-// ---------- config ----------
-
-async function publicConfig(env) {
-  const store = getStore(env);
-  const pp = await store.getSetting('paypal:' + paypalEnv(env));
-  const defs = await planDefs(env);
+function publicConfig(env) {
   return {
     ssoClientId: clientId(env),
-    currency: currencyOf(env),
     strongWeight: STRONG_WEIGHT,
     maxUploadBytes: MAX_UPLOAD_BYTES,
-    plans: Object.entries(defs).map(([key, p]) => ({ key, ...p, paypalPlanId: pp?.plans?.[key] || null })),
-    paypal: env.PAYPAL_CLIENT_ID && pp ? { clientId: env.PAYPAL_CLIENT_ID, env: paypalEnv(env) } : null,
+    // Fallbacks for plans whose JSON in the dashboard doesn't set minutes/strong/email.
+    planDefaults: PLAN_DEFAULTS,
   };
-}
-
-// ---------- PayPal subscriptions ----------
-
-// Builds our record of a PayPal subscription.
-function subRecord(email, sub, planKey, prev) {
-  const same = prev && prev.sub_id === sub.id;
-  const next = Date.parse(sub.billing_info?.next_billing_time || '') || null;
-  const lastPay = Date.parse(sub.billing_info?.last_payment?.time || '') || null;
-  const start = lastPay || Date.parse(sub.start_time || '') || Date.now();
-
-  let periodStart = same ? prev.period_start : null;
-  let paidUntil = same ? prev.paid_until : null;
-  if (sub.status === 'ACTIVE') {
-    periodStart = start;
-    if (next) paidUntil = next + DAY; // a day of grace for the renewal charge
-  }
-  if (!periodStart) periodStart = start;
-  if (!paidUntil) paidUntil = addMonths(periodStart) + DAY;
-
-  return { email, sub_id: sub.id, plan_key: planKey, status: sub.status, period_start: periodStart, paid_until: paidUntil };
-}
-
-function subIsActive(sub, now = Date.now()) {
-  if (!sub || !PLANS[sub.plan_key]) return false;
-  if (sub.status === 'ACTIVE') return true;
-  // A cancelled subscription keeps working until the end of the month it paid for.
-  if (sub.status === 'CANCELLED') return sub.paid_until > now;
-  return false;
-}
-
-// Saves a subscription and mirrors it to reem.bi, so the dashboard shows who pays
-// for which plan until when. A failed or skipped sync is retried on the next refresh.
-async function saveSub(env, store, user, rec) {
-  const saved = await store.saveSub(rec);
-  const signature = rec.plan_key + ':' + rec.paid_until;
-  if (saved.synced !== signature && env.SSO_SITE_KEY && (rec.status === 'ACTIVE' || rec.status === 'CANCELLED')) {
-    const dash = ssoPlan(env, user);
-    // Don't overwrite a better plan the admin granted by hand.
-    const better = isUnlimited(dash.features)
-      || (dash.key && rank(dash.key) > rank(rec.plan_key) && (!dash.expiresAt || dash.expiresAt > rec.paid_until));
-    if (!better) {
-      try {
-        await setDashboardPlan(env, user.email, rec.plan_key, rec.paid_until);
-        await store.markSynced(user.email, signature);
-        forgetUser(user);
-      } catch (e) {
-        console.error('reem.bi sync failed', e.message);
-      }
-    }
-  }
-  return saved;
-}
-
-async function refreshSub(env, store, user, prev) {
-  const sub = await getSubscription(env, prev.sub_id);
-  const planKey = (await store.planKeyFor(sub.plan_id)) || prev.plan_key;
-  return saveSub(env, store, user, subRecord(user.email, sub, planKey, prev));
-}
-
-async function paypalEntitlement(env, store, user) {
-  const now = Date.now();
-  let sub = await store.getSub(user.email);
-  if (sub && !['CANCELLED', 'EXPIRED'].includes(sub.status)) {
-    const stale = sub.status === 'ACTIVE' && now < sub.paid_until ? 6 * HOUR : 10 * 60000;
-    if (now - sub.checked_at > stale) {
-      try { sub = await refreshSub(env, store, user, sub); } catch (e) { console.error('refresh failed', e.message); }
-    }
-  }
-  return { sub, active: subIsActive(sub, now) };
 }
 
 // ---------- what the user may do ----------
 
-// Combines the PayPal subscription and the plan set in the reem.bi dashboard; the better one wins.
+// The minutes renew at the start of every calendar month.
 async function entitlement(env, store, user) {
-  const now = Date.now();
-  const defs = await planDefs(env);
-  const { sub, active } = await paypalEntitlement(env, store, user);
-  const dash = ssoPlan(env, user);
-
-  let key = 'free', source = 'free', periodStart = monthStart(now), periodEnd = nextMonthStart(now), planExpiresAt = null;
-  if (active && (!dash.key || rank(sub.plan_key) >= rank(dash.key))) {
-    key = sub.plan_key; source = 'paypal'; periodStart = sub.period_start; periodEnd = sub.paid_until;
-  } else if (dash.key && dash.key !== 'free') {
-    key = dash.key; source = 'dashboard'; planExpiresAt = dash.expiresAt;
-  }
-
-  // Per-plan settings, plus whatever the dashboard sets for this user on this plan
-  // (or the user's personal overrides when they're on the default plan).
-  const sameAsDashboard = dash.key === key || (!dash.key && key === 'free');
-  let plan = { ...defs[key], ...(sameAsDashboard ? pickFeatures(dash.features) : {}) };
-  // Unlimited (the hidden dashboard plan timlul:unlimited, or a personal permission) isn't one of the
-  // site's plans: it isn't offered anywhere, it only shows as the user's plan name.
-  if (isUnlimited(dash.features)) {
-    plan = { ...plan, name: 'ללא הגבלה', credits: Infinity, strong: true, email: true, unlimited: true };
-    const exp = user.access?.plan_expires_at;
-    if (user.access?.plan?.id === clientId(env) + ':unlimited' && exp) planExpiresAt = exp * 1000;
-  }
-  return { key, plan, source, periodStart, periodEnd, planExpiresAt, sub };
+  const { plan, expiresAt, subscription } = userPlan(env, user);
+  return { plan, expiresAt, subscription, periodStart: monthStart(), periodEnd: nextMonthStart() };
 }
 
 async function accountState(env, store, user) {
   const ent = await entitlement(env, store, user);
   const used = await store.usedSince(user.email, ent.periodStart);
+  const unlimited = !!ent.plan.unlimited;
   return {
     user: { email: user.email, name: user.name },
-    plan: { key: ent.key, name: ent.plan.name, credits: ent.plan.unlimited ? null : ent.plan.credits, source: ent.source },
-    unlimited: !!ent.plan.unlimited,
+    plan: { key: ent.plan.key, name: ent.plan.name, credits: unlimited ? null : ent.plan.credits },
+    unlimited,
     features: { strong: !!ent.plan.strong, email: !!ent.plan.email },
     used: Math.round(used * 100) / 100,
-    remaining: ent.plan.unlimited ? null : Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100),
+    remaining: unlimited ? null : Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100),
     periodEnd: ent.periodEnd,
-    planExpiresAt: ent.planExpiresAt,
-    subscription: ent.sub ? { status: ent.sub.status, planKey: ent.sub.plan_key, paidUntil: ent.sub.paid_until } : null,
+    planExpiresAt: ent.expiresAt,
+    subscription: ent.subscription,
     isAdmin: isAdmin(env, user),
   };
-}
-
-async function activate(request, env, store, user) {
-  const { subscriptionId } = await readJson(request);
-  if (!subscriptionId || typeof subscriptionId !== 'string') return json({ error: 'bad_request' }, 400);
-
-  const sub = await getSubscription(env, subscriptionId);
-  if ((sub.custom_id || '').toLowerCase() !== user.email) {
-    return json({ error: 'forbidden', message: 'המנוי הזה לא שייך לחשבון שלך' }, 403);
-  }
-  const planKey = await store.planKeyFor(sub.plan_id);
-  if (!planKey) return json({ error: 'unknown_plan', message: 'תוכנית לא מוכרת' }, 400);
-
-  // A discounted plan: the coupon may be used once per person.
-  const couponPlan = await store.couponForPlan(sub.plan_id);
-  if (couponPlan && !(await store.redeem(couponPlan.code, user.email, sub.id))) {
-    try { await cancelSubscription(env, sub.id, 'Coupon already used'); } catch { /* ignore */ }
-    return json({ error: 'coupon_used', message: 'כבר השתמשת בקוד הקופון הזה. המנוי בוטל' }, 400);
-  }
-
-  const prev = await store.getSub(user.email);
-  if (prev && prev.sub_id !== sub.id && prev.status === 'ACTIVE') {
-    // Switching plans: stop billing the old subscription.
-    try { await cancelSubscription(env, prev.sub_id, 'Switched to another plan'); }
-    catch (e) { console.error('cancel old sub failed', e.message); }
-  }
-  await saveSub(env, store, user, subRecord(user.email, sub, planKey, prev));
-  return json(await accountState(env, store, user));
-}
-
-async function cancel(env, store, user) {
-  const sub = await store.getSub(user.email);
-  if (!sub || sub.status !== 'ACTIVE') return json({ error: 'no_subscription', message: 'אין מנוי פעיל' }, 400);
-  await cancelSubscription(env, sub.sub_id, 'Cancelled by the user');
-  try { await refreshSub(env, store, user, sub); }
-  catch { await store.saveSub({ ...sub, status: 'CANCELLED' }); }
-  return json(await accountState(env, store, user));
-}
-
-// ---------- coupons ----------
-
-async function usableCoupon(store, code, email) {
-  const coupon = await store.getCoupon(normalizeCode(code));
-  const problem = couponProblem(coupon);
-  if (problem) return { problem };
-  if (await store.redemption(coupon.code, email)) return { problem: 'כבר השתמשת בקוד הזה' };
-  return { coupon };
-}
-
-// Makes sure the coupon has a PayPal plan for every plan it applies to, at today's prices.
-async function ensureCouponPlans(env, store, coupon) {
-  const ppEnv = paypalEnv(env);
-  const currency = currencyOf(env);
-  const setting = await store.getSetting('paypal:' + ppEnv);
-  if (!setting?.productId) throw Object.assign(new Error('התשלומים עוד לא הופעלו באתר'), { status: 400 });
-  const existing = await store.couponPlans(coupon.code, ppEnv);
-  const out = {};
-  for (const key of coupon.plan_keys) {
-    const offer = couponOffer(coupon, key);
-    if (!offer) continue;
-    let row = existing.find(r => r.plan_key === key && r.price === PLANS[key].price && r.currency === currency);
-    if (!row) {
-      const id = await createPlan(env, {
-        productId: setting.productId,
-        name: `תמלול - ${PLANS[key].name} (${coupon.code})`,
-        description: couponLabel(coupon, currency),
-        cycles: billingCycles(offer, currency),
-      });
-      row = { paypal_plan_id: id, code: coupon.code, plan_key: key, env: ppEnv, price: PLANS[key].price, currency };
-      await store.saveCouponPlan(row);
-    }
-    out[key] = { ...offer, paypalPlanId: row.paypal_plan_id };
-  }
-  return out;
-}
-
-async function checkCoupon(request, env, store, user) {
-  const { code } = await readJson(request);
-  const { coupon, problem } = await usableCoupon(store, code, user.email);
-  if (problem) return json({ error: 'bad_coupon', message: problem }, 400);
-  const base = { code: coupon.code, type: coupon.type, label: couponLabel(coupon, currencyOf(env)) };
-  if (coupon.type === 'gift') return json({ ...base, planKey: coupon.plan_keys[0], months: coupon.months });
-  const offers = await ensureCouponPlans(env, store, coupon);
-  if (!Object.keys(offers).length) return json({ error: 'bad_coupon', message: 'הקוד לא מתאים לאף תוכנית' }, 400);
-  return json({ ...base, offers });
-}
-
-async function redeemGift(request, env, store, user) {
-  const { code } = await readJson(request);
-  const { coupon, problem } = await usableCoupon(store, code, user.email);
-  if (problem) return json({ error: 'bad_coupon', message: problem }, 400);
-  if (coupon.type !== 'gift') return json({ error: 'bad_coupon', message: 'הקוד הזה הוא הנחה למנוי. בחרו תוכנית למטה' }, 400);
-  if (!env.SSO_SITE_KEY) return json({ error: 'not_configured', message: 'מתנות עוד לא הופעלו באתר' }, 500);
-
-  const key = coupon.plan_keys[0];
-  const ent = await entitlement(env, store, user);
-  if (ent.plan.unlimited) return json({ error: 'has_plan', message: 'כבר יש לך גישה ללא הגבלה' }, 400);
-  if (ent.source === 'paypal' && rank(ent.key) >= rank(key)) {
-    return json({ error: 'has_plan', message: 'כבר יש לך מנוי בתשלום לתוכנית הזו או לתוכנית גבוהה יותר' }, 400);
-  }
-  const dash = ssoPlan(env, user);
-  if (dash.key && rank(dash.key) > rank(key) && (!dash.expiresAt || dash.expiresAt > Date.now())) {
-    return json({ error: 'has_plan', message: 'כבר יש לך תוכנית גבוהה יותר' }, 400);
-  }
-  // Another gift of the same plan adds on top of the time left.
-  const base = dash.key === key && dash.expiresAt && dash.expiresAt > Date.now() ? dash.expiresAt : Date.now();
-  if (!(await store.redeem(coupon.code, user.email, null))) return json({ error: 'bad_coupon', message: 'כבר השתמשת בקוד הזה' }, 400);
-  try {
-    await setDashboardPlan(env, user.email, key, addMonths(base, coupon.months));
-  } catch (e) {
-    await store.unredeem(coupon.code, user.email);
-    throw e;
-  }
-  forgetUser(user);
-  const fresh = await authenticate(new Request('https://x/', { headers: { Authorization: user.cacheKey } }), env);
-  return json(await accountState(env, store, fresh || user));
 }
 
 // ---------- transcription ----------
@@ -459,150 +208,42 @@ async function email(request, env, store, user) {
 }
 
 // ---------- admin ----------
-
-async function adminData(env, store) {
-  const stats = await store.stats(monthStart());
+//
+// What the reem.bi admin shows on this site's page (login.reembir.com/admin → אתרים → תמלול):
+// usage and cost stats and the state of the settings. Plans, coupons and subscriptions are
+// managed there directly, so they're not here.
+async function adminManifest(env, store) {
+  const d = await store.stats(monthStart());
   let costUsd = 0;
-  for (const row of stats.usage) costUsd += (row.seconds / 60) * (COST_PER_MINUTE[row.model] || 0);
-  const dash = await dashboardPlans(env, { fresh: true }); // the admin page always shows the current state
-  const wanted = Object.keys(PLANS).map(k => clientId(env) + ':' + k);
-  return {
-    ...stats,
-    models: modelIds(env),
-    estimatedOpenAiCostUsd: Math.round(costUsd * 100) / 100,
-    paypalEnv: paypalEnv(env),
-    paypal: await store.getSetting('paypal:' + paypalEnv(env)),
-    plans: await planDefs(env),
-    currency: currencyOf(env),
-    dashboard: dash.error
-      ? { error: dash.error }
-      : { missing: wanted.filter(id => !dash.ids.includes(id)), found: dash.ids, defaultPlan: dash.defaultPlan, expectedDefault: clientId(env) + ':free' },
-    configured: {
-      OPENAI_API_KEY: !!env.OPENAI_API_KEY,
-      PAYPAL_CLIENT_ID: !!env.PAYPAL_CLIENT_ID,
-      PAYPAL_CLIENT_SECRET: !!env.PAYPAL_CLIENT_SECRET,
-      RESEND_API_KEY: !!env.RESEND_API_KEY,
-      MAIL_FROM: !!env.MAIL_FROM,
-      SSO_SITE_KEY: !!env.SSO_SITE_KEY,
-    },
-  };
-}
-
-// What the reem.bi admin shows for this site (login.reembir.com/admin → אתרים → תמלול → לוח ניהול).
-// The format is generic so other sites can provide the same: stats, checks, actions, coupons, lists.
-async function adminManifest(env, store, url) {
-  const d = await adminData(env, store);
-  const cur = d.currency === 'ILS' ? '₪' : d.currency + ' ';
+  for (const row of d.usage) costUsd += (row.seconds / 60) * (COST_PER_MINUTE[row.model] || 0);
   const minutes = model => Math.round((d.usage.find(u => u.model === model)?.seconds || 0) / 60);
-  const active = {};
-  for (const r of d.subs) if (r.status === 'ACTIVE') active[r.plan_key] = (active[r.plan_key] || 0) + r.n;
-  const subsCount = Object.values(active).reduce((a, n) => a + n, 0);
-  const revenue = Object.entries(active).reduce((a, [k, n]) => a + n * (d.plans[k]?.price || 0), 0);
-
-  const ppChanged = d.paypal && Object.entries(PLANS).some(([k, p]) => p.price > 0 && d.paypal.prices[k] !== p.price);
-  const envName = d.paypalEnv === 'sandbox' ? 'בדיקות (sandbox)' : 'אמיתי (live)';
-  const checks = [
-    ...Object.entries(d.configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Variables and Secrets' })),
-    {
-      label: 'PayPal ' + envName,
-      ok: !!d.paypal && !ppChanged,
-      detail: !d.paypal ? 'עדיין לא נוצרו תוכניות. לחצו "יצירת תוכניות ב-PayPal"'
-        : ppChanged ? 'המחירים בקוד השתנו. לחצו שוב "יצירת תוכניות ב-PayPal"'
-          : Object.entries(d.paypal.plans).map(([k, id]) => `${PLANS[k]?.name || k}: ${cur}${d.paypal.prices[k]}`).join(' · '),
-    },
-    d.dashboard.error
-      ? { label: 'חיבור ל-reem.bi', ok: false, detail: d.dashboard.error }
-      : {
-        label: 'תוכניות בדשבורד',
-        ok: !d.dashboard.missing.length,
-        detail: d.dashboard.missing.length ? 'חסרות: ' + d.dashboard.missing.join(', ') + ' · נמצאו: ' + (d.dashboard.found.join(', ') || 'אין')
-          : Object.values(d.plans).map(p => `${p.name}: ${p.credits} דק׳`).join(' · '),
-      },
-  ];
-  if (!d.dashboard.error && d.dashboard.defaultPlan !== d.dashboard.expectedDefault) {
-    checks.push({ label: 'תוכנית ברירת מחדל', ok: false, detail: `בחרו ${d.dashboard.expectedDefault} בהגדרות האתר` });
-  }
-
-  const planName = k => (k === 'unlimited' ? 'ללא הגבלה' : PLANS[k]?.name || k);
-  const STATUS = { ACTIVE: ['פעיל', 'green'], CANCELLED: ['בוטל', ''], SUSPENDED: ['מושהה', 'red'], EXPIRED: ['הסתיים', ''] };
+  const ids = modelIds(env);
+  const configured = {
+    OPENAI_API_KEY: !!env.OPENAI_API_KEY,
+    RESEND_API_KEY: !!env.RESEND_API_KEY,
+    MAIL_FROM: !!env.MAIL_FROM,
+    ADMIN_EMAILS: !!env.ADMIN_EMAILS,
+  };
   return {
     version: 1,
     name: 'תמלול',
-    links: [{ label: 'פתיחת האתר', url: url.origin + '/' }],
     stats: [
-      { label: 'מנויים פעילים', value: subsCount },
-      { label: 'הכנסה חודשית', value: cur + revenue },
-      { label: 'משתמשים רשומים', value: d.users },
       { label: 'השתמשו החודש', value: d.activeUsers },
       { label: 'דקות החודש (מהיר)', value: minutes('fast') },
       { label: 'דקות החודש (מדויק)', value: minutes('strong') },
-      { label: 'עלות OpenAI החודש', value: '$' + d.estimatedOpenAiCostUsd },
+      { label: 'עלות OpenAI החודש', value: '$' + Math.round(costUsd * 100) / 100 },
     ],
-    checks,
-    actions: [{
-      id: 'paypal-setup',
-      label: 'יצירת תוכניות ב-PayPal',
-      description: `סביבה: ${envName}. לוחצים פעם אחת, ושוב רק אחרי שינוי מחירים או מעבר ל-live. מנויים קיימים ממשיכים לעבוד.`,
-      confirm: 'ליצור מוצר ותוכניות חדשים ב-PayPal לפי המחירים בקוד?',
-      primary: !d.paypal || ppChanged,
-    }],
-    coupons: {
-      currency: d.currency,
-      shareUrl: url.origin + '/?coupon=',
-      plans: PAID_PLAN_KEYS.map(k => ({ key: k, name: PLANS[k].name, price: PLANS[k].price })),
-      types: [
-        { id: 'percent', label: 'הנחה באחוזים', value: { label: 'אחוז הנחה', min: 1, max: 100, step: 1, default: 50 },
-          months: { label: 'לכמה חודשים (0 = לתמיד)', min: 0, max: 24, default: 1 }, plans: 'many',
-          help: 'מחיר מוזל בחודשים הראשונים, ואחר כך מחיר רגיל. 0 חודשים = הנחה לכל תקופת המנוי.' },
-        { id: 'amount', label: 'הנחה בשקלים לחודש', value: { label: 'הנחה בחודש', min: 1, max: 1000, step: 0.5, default: 5 },
-          months: { label: 'לכמה חודשים (0 = לתמיד)', min: 0, max: 24, default: 1 }, plans: 'many',
-          help: 'כמה יורד מהמחיר החודשי. אם ההנחה גדולה מהמחיר, החודשים האלה חינם.' },
-        { id: 'trial', label: 'חודשים ראשונים חינם', value: null,
-          months: { label: 'כמה חודשים חינם', min: 1, max: 12, default: 1 }, plans: 'many',
-          help: 'נרשמים ב-PayPal עם כרטיס, לא משלמים בתקופה הזו, ואחר כך מחויבים במחיר רגיל (אלא אם ביטלו).' },
-        { id: 'gift', label: 'מתנה בלי תשלום', value: null,
-          months: { label: 'כמה חודשים', min: 1, max: 24, default: 1 }, plans: 'one',
-          help: 'התוכנית ניתנת בלי לשלם ובלי כרטיס, ומופיעה אצל המשתמש בדשבורד עם תאריך תפוגה.' },
-      ],
-    },
+    checks: [
+      ...Object.entries(configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Worker timlul ← Variables and Secrets' })),
+      { label: 'מודלים', ok: true, detail: `מהיר: ${ids.fast} · מדויק: ${ids.strong}` },
+    ],
     lists: [{
-      title: 'מנויים אחרונים',
-      empty: 'עדיין אין מנויים',
-      items: d.recentSubs.map(r => ({
-        title: r.email,
-        subtitle: planName(r.plan_key),
-        date: r.paid_until,
-        dateLabel: r.status === 'ACTIVE' ? 'חידוש' : 'עד',
-        badge: (STATUS[r.status] || [r.status])[0],
-        badgeLevel: (STATUS[r.status] || [])[1] || '',
+      title: 'הכי הרבה שימוש החודש',
+      empty: 'עוד אין שימוש החודש',
+      items: d.topUsers.map(u => ({
+        title: u.email,
+        subtitle: `${Math.round(u.seconds / 60)} דקות הקלטה · ${Math.round(u.credits)} דקות מהמכסה`,
       })),
     }],
   };
-}
-
-async function adminPaypalSetup(env, store) {
-  const currency = currencyOf(env);
-  const paid = PAID_PLAN_KEYS.map(k => [k, PLANS[k]]);
-  const result = await createProductAndPlans(env, paid, currency);
-  for (const [key, id] of Object.entries(result.plans)) await store.mapPlan(id, key);
-  const setting = {
-    ...result,
-    currency,
-    prices: Object.fromEntries(paid.map(([k, p]) => [k, p.price])),
-    createdAt: Date.now(),
-  };
-  await store.setSetting('paypal:' + paypalEnv(env), setting);
-  return json({ ...setting, message: '✓ התוכניות נוצרו ב-PayPal. כפתורי ההרשמה פעילים באתר.' });
-}
-
-async function couponList(env, store) {
-  return (await store.listCoupons()).map(c => ({ ...c, label: couponLabel(c, currencyOf(env)) }));
-}
-
-async function adminCreateCoupon(request, env, store) {
-  let coupon;
-  try { coupon = validateCoupon(await readJson(request)); }
-  catch (e) { return json({ error: 'bad_coupon', message: e.message }, 400); }
-  if (!(await store.createCoupon(coupon))) return json({ error: 'exists', message: 'כבר קיים קוד כזה' }, 400);
-  return json({ coupons: await couponList(env, store) });
 }

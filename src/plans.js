@@ -1,25 +1,18 @@
-// Plans and prices. Prices live here (PayPal needs them); after changing a price,
-// deploy and click "יצירת תוכניות ב-PayPal" in the reem.bi admin (אתרים → תמלול → לוח ניהול).
-//
-// Minutes and features can also be managed from the reem.bi dashboard: a plan there
-// called "timlul:<key>" with JSON like {"minutes": 180, "strong": true, "email": true}
-// overrides the defaults below (see docs/SETUP-HE.md).
+// Plans, prices, coupons and subscriptions are all managed in the reem.bi admin
+// (login.reembir.com/admin → אתרים → תמלול). This file only has the defaults used when a
+// plan in the dashboard doesn't say otherwise in its JSON: {"minutes": 180, "strong": true, "email": true}.
 //
 // Usage is counted in "credits": one minute of audio with the fast model
 // costs 1 credit, with the accurate model STRONG_WEIGHT credits.
 
-export const CURRENCY_DEFAULT = 'ILS';
-
-export const PLANS = {
-  free:     { name: 'חינם',   price: 0,  credits: 10,   strong: false, email: false },
-  basic:    { name: 'בסיסי',  price: 9,  credits: 180,  strong: true,  email: true },
-  pro:      { name: 'מקצועי', price: 19, credits: 600,  strong: true,  email: true },
-  business: { name: 'עסקי',   price: 39, credits: 1500, strong: true,  email: true },
+export const PLAN_DEFAULTS = {
+  free:     { credits: 10,   strong: false, email: false },
+  basic:    { credits: 180,  strong: true,  email: true },
+  pro:      { credits: 600,  strong: true,  email: true },
+  business: { credits: 1500, strong: true,  email: true },
 };
-
-export const PLAN_ORDER = Object.keys(PLANS);
-export const PAID_PLAN_KEYS = PLAN_ORDER.filter(k => PLANS[k].price > 0);
-export const rank = key => PLAN_ORDER.indexOf(key);
+// Any other paid plan created in the dashboard without "minutes":
+export const PAID_DEFAULT = { credits: 180, strong: true, email: true };
 
 export const STRONG_WEIGHT = 2;
 

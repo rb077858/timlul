@@ -9,8 +9,8 @@ let auth = null;
 let me = null;
 let currentFile = null;
 let busy = false;
-let paypalLoaded = null;
-let coupon = null; // the applied coupon from /api/coupon/check
+let catalog = null; // the plans for sale, from reem.bi (auth.billing.catalog())
+let coupon = null;  // an applied coupon, from auth.billing.checkCoupon()
 const PENDING_COUPON = 'timlul:coupon';
 
 // ---------- startup ----------
@@ -21,10 +21,9 @@ async function init() {
   try {
     config = await (await fetch('/api/config')).json();
   } catch {
-    config = { ssoClientId: 'timlul', plans: [], strongWeight: 2, paypal: null };
+    config = { ssoClientId: 'timlul', strongWeight: 2, planDefaults: {} };
   }
   renderStaticConfig();
-  renderPlans();
 
   if (!window.ReemAuth) {
     $('authLoading').hidden = true;
@@ -32,6 +31,8 @@ async function init() {
     return;
   }
   auth = window.ReemAuth.init({ clientId: config.ssoClientId });
+  auth.billing.catalog().then(c => { catalog = c; renderStaticConfig(); renderPlans(); })
+    .catch(() => { $('plansGrid').textContent = 'לא הצלחנו לטעון את התוכניות. נסו לרענן.'; });
   auth.onChange(onUser);
 
   $('loginBtn').onclick = () => auth.login();
@@ -44,7 +45,7 @@ async function init() {
 function renderStaticConfig() {
   document.querySelectorAll('.strong-weight').forEach(el => { el.textContent = config.strongWeight; });
   $('strongNote').textContent = `המודל החזק ביותר. דקה = ${config.strongWeight} דקות מהמכסה`;
-  const free = config.plans.find(p => p.key === 'free');
+  const free = catalog && catalog.free && planInfo(catalog.free);
   if (free) {
     $('heroCta').querySelector('.small').textContent = `${free.credits} דקות חינם בכל חודש, בלי כרטיס אשראי`;
   }
@@ -92,9 +93,10 @@ async function api(path, options = {}) {
   return data;
 }
 
-async function refreshMe() {
+// fresh: right after a payment / coupon / cancel, skip the server's one-minute cache.
+async function refreshMe(fresh) {
   try {
-    me = await api('/api/me');
+    me = await api('/api/me' + (fresh ? '?fresh=1' : ''));
   } catch (e) {
     toast(e.message);
     return;
@@ -122,18 +124,14 @@ function renderQuota() {
   $('quotaBar').style.width = pct + '%';
 
   const sub = me.subscription;
-  const active = sub && sub.status === 'ACTIVE' && me.plan.key !== 'free';
+  const active = sub && sub.status === 'ACTIVE';
   let detail = me.unlimited
     ? `נוצלו ${fmtMinutes(me.used)} דקות. ללא הגבלה. `
     : `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
-  if (me.unlimited) {
-    if (me.planExpiresAt) detail += `בתוקף עד ${fmtDate(me.planExpiresAt)}`;
-  } else if (me.plan.source === 'dashboard') {
-    if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
-    detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
-  } else if (active) detail += `חידוש ב-${fmtDate(me.periodEnd)}`;
-  else if (sub && sub.status === 'CANCELLED' && me.plan.key !== 'free') detail += `המנוי בוטל ופעיל עד ${fmtDate(me.periodEnd)}`;
-  else detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
+  if (active) detail += `המנוי מתחדש ב-${fmtDate(sub.paid_until * 1000 - 86400000)}. `;
+  else if (sub && sub.status === 'CANCELLED') detail += `המנוי בוטל ופעיל עד ${fmtDate(sub.paid_until * 1000)}. `;
+  else if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
+  if (!me.unlimited) detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
   $('quotaDetail').textContent = detail;
   $('cancelBtn').hidden = !active;
   applyFeatures();
@@ -152,7 +150,7 @@ function applyFeatures() {
   $('emailBtn').textContent = me?.features?.email ? 'שליחה למייל שלי' : '🔒 שליחה למייל שלי';
 }
 
-// ---------- plans & PayPal ----------
+// ---------- plans & PayPal (central billing of reem.bi, through the SDK) ----------
 
 let plansSignature = null;
 
@@ -160,53 +158,82 @@ function planSignature() {
   return me ? [me.plan.key, me.subscription?.status || '', coupon?.code || '', me.unlimited].join(':') : null;
 }
 
+const planKey = id => String(id || '').split(':').pop();
+const money = (v, c) => ({ ILS: '₪', USD: '$', EUR: '€' }[c] || (c || '') + ' ') + v;
+
+// A catalog plan with its minutes and features (from its JSON in the dashboard, or the defaults).
+function planInfo(p) {
+  const key = planKey(p.id);
+  const def = (config.planDefaults || {})[key] || (p.price ? { credits: 180, strong: true, email: true } : { credits: 10, strong: false, email: false });
+  const f = p.features || {};
+  return {
+    ...p, key,
+    credits: Number.isFinite(Number(f.minutes)) && f.minutes !== null && f.minutes !== '' && Number(f.minutes) >= 0 ? Number(f.minutes) : def.credits,
+    strong: typeof f.strong === 'boolean' ? f.strong : def.strong,
+    email: typeof f.email === 'boolean' ? f.email : def.email,
+  };
+}
+
 function renderPlans() {
+  if (!catalog) return;
   plansSignature = planSignature();
   const grid = $('plansGrid');
   grid.textContent = '';
-  const currency = config.currency === 'ILS' ? '₪' : config.currency + ' ';
-  const activeKey = me && me.plan.key !== 'free' ? me.plan.key : null;
   const subActive = me?.subscription?.status === 'ACTIVE';
+  const plans = [...(catalog.free ? [{ ...catalog.free, price: 0 }] : []), ...catalog.plans].map(planInfo);
+  const featured = plans.length > 2 ? plans[Math.min(2, plans.length - 1)].id : null;
 
-  for (const plan of config.plans) {
+  for (const plan of plans) {
     const card = document.createElement('div');
-    card.className = 'plan' + (plan.key === 'pro' ? ' featured' : '') + (me && !me.unlimited && me.plan.key === plan.key ? ' current' : '');
-    if (plan.key === 'pro') card.append(el('span', 'plan-badge', 'הכי משתלם'));
+    const mine = me && !me.unlimited && me.plan.key === plan.key;
+    card.className = 'plan' + (plan.id === featured ? ' featured' : '') + (mine ? ' current' : '');
+    if (plan.id === featured) card.append(el('span', 'plan-badge', 'הכי משתלם'));
     card.append(el('h3', '', plan.name));
-    const offer = coupon?.offers?.[plan.key] && !(me && me.plan.key === plan.key) ? coupon.offers[plan.key] : null;
-    const price = el('div', 'price', currency + (offer ? offer.firstPrice : plan.price));
-    if (offer) price.prepend(el('s', 'old-price', currency + plan.price));
+    const offer = coupon?.offers?.[plan.id] && !mine ? coupon.offers[plan.id] : null;
+    const price = el('div', 'price', money(offer ? offer.first_price : plan.price, plan.currency || catalog.currency));
+    if (offer) price.prepend(el('s', 'old-price', money(plan.price, plan.currency)));
     if (plan.price) price.append(el('small', '', ' / חודש'));
     card.append(price);
     if (offer) {
-      card.append(el('div', 'offer', offer.months
-        ? `${coupon.label}, אחר כך ${currency}${offer.regularPrice} לחודש`
-        : coupon.label));
+      card.append(el('div', 'offer', offer.months ? `${coupon.label}, אחר כך ${money(offer.regular_price, plan.currency)} לחודש` : coupon.label));
     }
+    if (plan.description) card.append(el('div', 'muted small', plan.description));
 
     const ul = document.createElement('ul');
     const hours = plan.credits >= 120 ? ` (${+(plan.credits / 60).toFixed(1)} שעות)` : '';
     ul.append(el('li', '', `${plan.credits.toLocaleString('he-IL')} דקות תמלול בחודש${hours}`));
     ul.append(el('li', '', plan.strong ? 'מודל מהיר ומודל מדויק' : 'מודל מהיר בלבד'));
     ul.append(el('li', '', plan.email ? 'הורדה כ-TXT ושליחה למייל' : 'הורדה כ-TXT'));
-    if (plan.price) ul.append(el('li', '', `כ-${(plan.price / plan.credits * 100).toFixed(0)} אג׳ לדקה`));
+    if (plan.price && plan.credits) ul.append(el('li', '', `כ-${(plan.price / plan.credits * 100).toFixed(0)} אג׳ לדקה`));
     card.append(ul);
 
     if (me?.unlimited) {
       if (plan.price) card.append(el('div', 'state', 'יש לך גישה ללא הגבלה'));
-    } else if (me && me.plan.key === plan.key) {
+    } else if (mine) {
       card.append(el('div', 'state', 'התוכנית הנוכחית שלך'));
     } else if (plan.price) {
       const slot = el('div', 'pp', '');
       card.append(slot);
+      const ppId = offer ? offer.paypal_plan_id : plan.paypal_plan_id;
       if (!me) {
         const b = el('button', 'btn btn-ghost btn-block', 'התחברות להרשמה');
         b.onclick = () => auth ? auth.login() : null;
         slot.append(b);
-      } else if (!config.paypal || !plan.paypalPlanId) {
+      } else if (!catalog.paypal || !ppId) {
         slot.append(el('div', 'muted small center', 'ההרשמה תיפתח בקרוב'));
       } else {
-        renderPayPalButton(slot, offer ? offer.paypalPlanId : plan.paypalPlanId, activeKey && subActive);
+        auth.billing.button(slot, ppId, {
+          onSuccess: async () => {
+            clearCoupon();
+            await refreshMe(true);
+            renderPlans();
+            toast('המנוי הופעל! תודה 🎉');
+            $('workspace').scrollIntoView({ behavior: 'smooth' });
+          },
+          onError: err => showPlanNote(err && err.message && err.message !== 'login'
+            ? 'התשלום לא הושלם: ' + err.message : 'התשלום לא הושלם. נסו שוב או בחרו אמצעי תשלום אחר.'),
+        }).catch(e => slot.append(el('div', 'muted small center', e.message)));
+        if (subActive) slot.append(el('div', 'muted small center', 'המנוי הנוכחי יבוטל אוטומטית'));
       }
     }
     grid.append(card);
@@ -218,56 +245,6 @@ function el(tag, className, text) {
   if (className) e.className = className;
   if (text) e.textContent = text;
   return e;
-}
-
-function loadPayPal() {
-  if (paypalLoaded) return paypalLoaded;
-  paypalLoaded = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    const params = new URLSearchParams({
-      'client-id': config.paypal.clientId,
-      vault: 'true',
-      intent: 'subscription',
-      currency: config.currency,
-      components: 'buttons',
-      locale: 'he_IL',
-    });
-    s.src = 'https://www.paypal.com/sdk/js?' + params;
-    s.onload = () => resolve(window.paypal);
-    s.onerror = () => { paypalLoaded = null; reject(new Error('PayPal לא נטען')); };
-    document.head.append(s);
-  });
-  return paypalLoaded;
-}
-
-async function renderPayPalButton(slot, paypalPlanId, switching) {
-  let paypal;
-  try { paypal = await loadPayPal(); }
-  catch (e) { slot.append(el('div', 'muted small center', e.message)); return; }
-
-  paypal.Buttons({
-    style: { layout: 'vertical', shape: 'rect', label: 'subscribe', height: 44, tagline: false },
-    createSubscription: (data, actions) => actions.subscription.create({
-      plan_id: paypalPlanId,
-      custom_id: me.user.email,
-      application_context: { shipping_preference: 'NO_SHIPPING', user_action: 'SUBSCRIBE_NOW' },
-    }),
-    onApprove: async data => {
-      try {
-        me = await api('/api/subscription/activate', { method: 'POST', json: { subscriptionId: data.subscriptionID } });
-        clearCoupon();
-        renderQuota();
-        renderPlans();
-        toast('המנוי הופעל! תודה 🎉');
-        $('workspace').scrollIntoView({ behavior: 'smooth' });
-      } catch (e) {
-        showPlanNote('התשלום התקבל אבל ההפעלה נכשלה: ' + e.message + '. רעננו את הדף בעוד דקה.');
-      }
-    },
-    onError: () => showPlanNote('התשלום לא הושלם. נסו שוב או בחרו אמצעי תשלום אחר.'),
-  }).render(slot).catch(() => {});
-
-  if (switching) slot.append(el('div', 'muted small center', 'המנוי הנוכחי יבוטל אוטומטית'));
 }
 
 function showPlanNote(text) {
@@ -465,7 +442,8 @@ async function sendEmail() {
 async function cancelSubscription() {
   if (!confirm('לבטל את המנוי? התוכנית תמשיך לעבוד עד סוף התקופה ששולמה, ולא יהיו חיובים נוספים.')) return;
   try {
-    me = await api('/api/subscription/cancel', { method: 'POST' });
+    await auth.billing.cancel();
+    await refreshMe(true);
     renderQuota();
     renderPlans();
     toast('המנוי בוטל');
@@ -512,7 +490,7 @@ async function applyCoupon(code) {
   }
   $('couponBtn').disabled = true;
   try {
-    coupon = await api('/api/coupon/check', { method: 'POST', json: { code } });
+    coupon = await auth.billing.checkCoupon(code);
     if (coupon.type === 'gift') {
       couponMessage('🎁 ' + coupon.label);
       const btn = el('button', 'btn btn-primary', 'הפעלת המתנה');
@@ -535,8 +513,9 @@ async function applyCoupon(code) {
 async function redeemGift(e) {
   e.currentTarget.disabled = true;
   try {
-    me = await api('/api/coupon/redeem', { method: 'POST', json: { code: coupon.code } });
+    await auth.billing.redeem(coupon.code);
     clearCoupon();
+    await refreshMe(true);
     renderQuota();
     renderPlans();
     toast('המתנה הופעלה! 🎉');
