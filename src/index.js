@@ -199,11 +199,10 @@ async function email(request, env, store, user) {
   const { text, filename } = await readJson(request);
   if (typeof text !== 'string' || !text.trim()) return json({ error: 'bad_request', message: 'אין טקסט לשליחה' }, 400);
   if (text.length > 2000000) return json({ error: 'too_large', message: 'הטקסט ארוך מדי לשליחה במייל' }, 413);
-  if (!env.RESEND_API_KEY || !env.MAIL_FROM) return json({ error: 'not_configured', message: 'שליחת מייל לא הוגדרה' }, 500);
   if (!(await store.allowEmail(user.email, EMAILS_PER_DAY))) {
     return json({ error: 'rate_limited', message: 'שלחת יותר מדי מיילים היום' }, 429);
   }
-  await sendTranscriptEmail(env, { to: user.email, text, filename: String(filename || 'transcript').slice(0, 120) });
+  await sendTranscriptEmail(env, { authorization: request.headers.get('Authorization'), text, filename: String(filename || 'transcript').slice(0, 120) });
   return json({ ok: true, to: user.email });
 }
 
@@ -220,8 +219,6 @@ async function adminManifest(env, store) {
   const ids = modelIds(env);
   const configured = {
     OPENAI_API_KEY: !!env.OPENAI_API_KEY,
-    RESEND_API_KEY: !!env.RESEND_API_KEY,
-    MAIL_FROM: !!env.MAIL_FROM,
     ADMIN_EMAILS: !!env.ADMIN_EMAILS,
   };
   return {

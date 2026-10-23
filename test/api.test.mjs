@@ -47,9 +47,11 @@ async function mock(req) {
     if (openaiFails) return Response.json({ error: { message: 'boom' } }, { status: 500 });
     return Response.json({ text: ' שלום עולם ' });
   }
-  if (url.host === 'api.resend.com') {
+  if (url.host === 'login.reembir.com' && url.pathname === '/api/email/me') {
+    if (!/^Bearer tok-/.test(auth)) return Response.json({ message: 'no' }, { status: 401 });
     calls.at(-1).json = await req.json();
-    return Response.json({ id: 'email-1' });
+    calls.at(-1).auth = auth;
+    return Response.json({ ok: true, to: auth.slice(11) });
   }
   return new Response('unexpected ' + req.url, { status: 599 });
 }
@@ -62,7 +64,7 @@ before(async () => {
     compatibilityDate: '2025-09-01',
     durableObjects: { STORE: { className: 'Store', useSQLite: true } },
     bindings: {
-      OPENAI_API_KEY: 'sk-test', RESEND_API_KEY: 're-test', MAIL_FROM: 'Timlul <t@example.com>', ADMIN_EMAILS: 'boss@example.com',
+      OPENAI_API_KEY: 'sk-test', ADMIN_EMAILS: 'boss@example.com',
     },
     serviceBindings: { ASSETS: () => new Response('asset') },
     outboundService: mock,
@@ -142,8 +144,10 @@ test('free plan cannot email; paid plans can', async () => {
   dash['d2@example.com'] = { plan: 'timlul:basic' };
   const res = await send('d2@example.com');
   assert.equal(res.status, 200);
-  const sent = calls.findLast(c => c.url.includes('resend')).json;
-  assert.deepEqual(sent.to, ['d2@example.com']);
+  const call = calls.findLast(c => c.url.includes('/api/email/me'));
+  const sent = call.json;
+  assert.equal(call.auth, 'Bearer tok-d2@example.com', 'sent as the user, so reem.bi mails only them');
+  assert.equal(sent.to, undefined);
   assert.equal(sent.attachments[0].filename, 'meeting.txt');
   assert.equal(Buffer.from(sent.attachments[0].content, 'base64').toString('utf8'), '﻿תמלול לדוגמה');
 });
