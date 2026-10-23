@@ -401,3 +401,33 @@ test('the hidden timlul:unlimited dashboard plan: named "ללא הגבלה", nev
   assert.equal((await post('/api/coupon/redeem', user, { code: 'GIFTU' })).status, 400);
   assert.equal(dashAccess[user].plan_id, 'timlul:unlimited');
 });
+
+test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir.com', async () => {
+  const admin = 'boss@example.com';
+  const SSO = 'https://login.reembir.com';
+  const pre = await mf.dispatchFetch(BASE + '/api/admin/manifest', {
+    method: 'OPTIONS', headers: { Origin: SSO, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' },
+  });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), SSO);
+
+  const res = await mf.dispatchFetch(BASE + '/api/admin/manifest', { headers: { ...as(admin), Origin: SSO } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), SSO);
+  const m = await res.json();
+  assert.equal(m.version, 1);
+  assert.ok(m.stats.find(s => s.label === 'מנויים פעילים'));
+  assert.ok(m.checks.find(c => c.label === 'OPENAI_API_KEY').ok);
+  assert.deepEqual(m.coupons.types.map(t => t.id), ['percent', 'amount', 'trial', 'gift']);
+  assert.deepEqual(m.coupons.plans.map(p => p.key), ['basic', 'pro', 'business']);
+  assert.ok(m.lists[0].items.length > 0);
+  assert.equal(m.actions[0].id, 'paypal-setup');
+
+  const evil = await mf.dispatchFetch(BASE + '/api/admin/manifest', { headers: { ...as(admin), Origin: 'https://evil.example' } });
+  assert.equal(evil.headers.get('access-control-allow-origin'), null);
+  const notAdmin = await mf.dispatchFetch(BASE + '/api/admin/manifest', { headers: { ...as('a@example.com'), Origin: SSO } });
+  assert.equal(notAdmin.status, 403);
+
+  const action = await (await post('/api/admin/actions/paypal-setup', admin)).json();
+  assert.match(action.message, /נוצרו/);
+});

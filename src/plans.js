@@ -1,5 +1,5 @@
 // Plans and prices. Prices live here (PayPal needs them); after changing a price,
-// deploy and click "יצירת תוכניות ב-PayPal" in /admin.html.
+// deploy and click "יצירת תוכניות ב-PayPal" in the reem.bi admin (אתרים → תמלול → לוח ניהול).
 //
 // Minutes and features can also be managed from the reem.bi dashboard: a plan there
 // called "timlul:<key>" with JSON like {"minutes": 180, "strong": true, "email": true}

@@ -21,14 +21,33 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    // The site is managed from the reem.bi admin (login.reembir.com/admin), which calls /api/admin/* from its page.
+    const cors = adminCors(request, env, url);
+    if (cors && request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    let res;
     try {
-      return await route(request, env, url);
+      res = await route(request, env, url);
     } catch (e) {
       console.error(e);
-      return json({ error: 'server', message: e.message || 'שגיאת שרת' }, e.status && e.status < 500 ? e.status : 500);
+      res = json({ error: 'server', message: e.message || 'שגיאת שרת' }, e.status && e.status < 500 ? e.status : 500);
     }
+    if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+    return res;
   },
 };
+
+function adminCors(request, env, url) {
+  const origin = request.headers.get('Origin');
+  if (!origin || !url.pathname.startsWith('/api/admin/')) return null;
+  if (origin !== new URL(env.SSO_URL || 'https://login.reembir.com').origin) return null;
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
+}
 
 async function route(request, env, url) {
   const path = url.pathname;
@@ -51,8 +70,11 @@ async function route(request, env, url) {
 
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
-    if (path === '/api/admin/stats' && method === 'GET') return adminStats(env, store);
-    if (path === '/api/admin/paypal-setup' && method === 'POST') return adminPaypalSetup(env, store);
+    if (path === '/api/admin/stats' && method === 'GET') return json(await adminData(env, store));
+    if (path === '/api/admin/manifest' && method === 'GET') return json(await adminManifest(env, store, url));
+    if ((path === '/api/admin/paypal-setup' || path === '/api/admin/actions/paypal-setup') && method === 'POST') {
+      return adminPaypalSetup(env, store);
+    }
     if (path === '/api/admin/coupons' && method === 'GET') return json({ coupons: await couponList(env, store) });
     if (path === '/api/admin/coupons' && method === 'POST') return adminCreateCoupon(request, env, store);
     const m = path.match(/^\/api\/admin\/coupons\/([A-Za-z0-9_-]+)(\/(enable|disable))?$/);
@@ -438,13 +460,13 @@ async function email(request, env, store, user) {
 
 // ---------- admin ----------
 
-async function adminStats(env, store) {
+async function adminData(env, store) {
   const stats = await store.stats(monthStart());
   let costUsd = 0;
   for (const row of stats.usage) costUsd += (row.seconds / 60) * (COST_PER_MINUTE[row.model] || 0);
   const dash = await dashboardPlans(env, { fresh: true }); // the admin page always shows the current state
   const wanted = Object.keys(PLANS).map(k => clientId(env) + ':' + k);
-  return json({
+  return {
     ...stats,
     models: modelIds(env),
     estimatedOpenAiCostUsd: Math.round(costUsd * 100) / 100,
@@ -463,7 +485,99 @@ async function adminStats(env, store) {
       MAIL_FROM: !!env.MAIL_FROM,
       SSO_SITE_KEY: !!env.SSO_SITE_KEY,
     },
-  });
+  };
+}
+
+// What the reem.bi admin shows for this site (login.reembir.com/admin → אתרים → תמלול → לוח ניהול).
+// The format is generic so other sites can provide the same: stats, checks, actions, coupons, lists.
+async function adminManifest(env, store, url) {
+  const d = await adminData(env, store);
+  const cur = d.currency === 'ILS' ? '₪' : d.currency + ' ';
+  const minutes = model => Math.round((d.usage.find(u => u.model === model)?.seconds || 0) / 60);
+  const active = {};
+  for (const r of d.subs) if (r.status === 'ACTIVE') active[r.plan_key] = (active[r.plan_key] || 0) + r.n;
+  const subsCount = Object.values(active).reduce((a, n) => a + n, 0);
+  const revenue = Object.entries(active).reduce((a, [k, n]) => a + n * (d.plans[k]?.price || 0), 0);
+
+  const ppChanged = d.paypal && Object.entries(PLANS).some(([k, p]) => p.price > 0 && d.paypal.prices[k] !== p.price);
+  const envName = d.paypalEnv === 'sandbox' ? 'בדיקות (sandbox)' : 'אמיתי (live)';
+  const checks = [
+    ...Object.entries(d.configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Variables and Secrets' })),
+    {
+      label: 'PayPal ' + envName,
+      ok: !!d.paypal && !ppChanged,
+      detail: !d.paypal ? 'עדיין לא נוצרו תוכניות. לחצו "יצירת תוכניות ב-PayPal"'
+        : ppChanged ? 'המחירים בקוד השתנו. לחצו שוב "יצירת תוכניות ב-PayPal"'
+          : Object.entries(d.paypal.plans).map(([k, id]) => `${PLANS[k]?.name || k}: ${cur}${d.paypal.prices[k]}`).join(' · '),
+    },
+    d.dashboard.error
+      ? { label: 'חיבור ל-reem.bi', ok: false, detail: d.dashboard.error }
+      : {
+        label: 'תוכניות בדשבורד',
+        ok: !d.dashboard.missing.length,
+        detail: d.dashboard.missing.length ? 'חסרות: ' + d.dashboard.missing.join(', ') + ' · נמצאו: ' + (d.dashboard.found.join(', ') || 'אין')
+          : Object.values(d.plans).map(p => `${p.name}: ${p.credits} דק׳`).join(' · '),
+      },
+  ];
+  if (!d.dashboard.error && d.dashboard.defaultPlan !== d.dashboard.expectedDefault) {
+    checks.push({ label: 'תוכנית ברירת מחדל', ok: false, detail: `בחרו ${d.dashboard.expectedDefault} בהגדרות האתר` });
+  }
+
+  const planName = k => (k === 'unlimited' ? 'ללא הגבלה' : PLANS[k]?.name || k);
+  const STATUS = { ACTIVE: ['פעיל', 'green'], CANCELLED: ['בוטל', ''], SUSPENDED: ['מושהה', 'red'], EXPIRED: ['הסתיים', ''] };
+  return {
+    version: 1,
+    name: 'תמלול',
+    links: [{ label: 'פתיחת האתר', url: url.origin + '/' }],
+    stats: [
+      { label: 'מנויים פעילים', value: subsCount },
+      { label: 'הכנסה חודשית', value: cur + revenue },
+      { label: 'משתמשים רשומים', value: d.users },
+      { label: 'השתמשו החודש', value: d.activeUsers },
+      { label: 'דקות החודש (מהיר)', value: minutes('fast') },
+      { label: 'דקות החודש (מדויק)', value: minutes('strong') },
+      { label: 'עלות OpenAI החודש', value: '$' + d.estimatedOpenAiCostUsd },
+    ],
+    checks,
+    actions: [{
+      id: 'paypal-setup',
+      label: 'יצירת תוכניות ב-PayPal',
+      description: `סביבה: ${envName}. לוחצים פעם אחת, ושוב רק אחרי שינוי מחירים או מעבר ל-live. מנויים קיימים ממשיכים לעבוד.`,
+      confirm: 'ליצור מוצר ותוכניות חדשים ב-PayPal לפי המחירים בקוד?',
+      primary: !d.paypal || ppChanged,
+    }],
+    coupons: {
+      currency: d.currency,
+      shareUrl: url.origin + '/?coupon=',
+      plans: PAID_PLAN_KEYS.map(k => ({ key: k, name: PLANS[k].name, price: PLANS[k].price })),
+      types: [
+        { id: 'percent', label: 'הנחה באחוזים', value: { label: 'אחוז הנחה', min: 1, max: 100, step: 1, default: 50 },
+          months: { label: 'לכמה חודשים (0 = לתמיד)', min: 0, max: 24, default: 1 }, plans: 'many',
+          help: 'מחיר מוזל בחודשים הראשונים, ואחר כך מחיר רגיל. 0 חודשים = הנחה לכל תקופת המנוי.' },
+        { id: 'amount', label: 'הנחה בשקלים לחודש', value: { label: 'הנחה בחודש', min: 1, max: 1000, step: 0.5, default: 5 },
+          months: { label: 'לכמה חודשים (0 = לתמיד)', min: 0, max: 24, default: 1 }, plans: 'many',
+          help: 'כמה יורד מהמחיר החודשי. אם ההנחה גדולה מהמחיר, החודשים האלה חינם.' },
+        { id: 'trial', label: 'חודשים ראשונים חינם', value: null,
+          months: { label: 'כמה חודשים חינם', min: 1, max: 12, default: 1 }, plans: 'many',
+          help: 'נרשמים ב-PayPal עם כרטיס, לא משלמים בתקופה הזו, ואחר כך מחויבים במחיר רגיל (אלא אם ביטלו).' },
+        { id: 'gift', label: 'מתנה בלי תשלום', value: null,
+          months: { label: 'כמה חודשים', min: 1, max: 24, default: 1 }, plans: 'one',
+          help: 'התוכנית ניתנת בלי לשלם ובלי כרטיס, ומופיעה אצל המשתמש בדשבורד עם תאריך תפוגה.' },
+      ],
+    },
+    lists: [{
+      title: 'מנויים אחרונים',
+      empty: 'עדיין אין מנויים',
+      items: d.recentSubs.map(r => ({
+        title: r.email,
+        subtitle: planName(r.plan_key),
+        date: r.paid_until,
+        dateLabel: r.status === 'ACTIVE' ? 'חידוש' : 'עד',
+        badge: (STATUS[r.status] || [r.status])[0],
+        badgeLevel: (STATUS[r.status] || [])[1] || '',
+      })),
+    }],
+  };
 }
 
 async function adminPaypalSetup(env, store) {
@@ -478,7 +592,7 @@ async function adminPaypalSetup(env, store) {
     createdAt: Date.now(),
   };
   await store.setSetting('paypal:' + paypalEnv(env), setting);
-  return json(setting);
+  return json({ ...setting, message: '✓ התוכניות נוצרו ב-PayPal. כפתורי ההרשמה פעילים באתר.' });
 }
 
 async function couponList(env, store) {

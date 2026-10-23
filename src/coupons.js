@@ -1,4 +1,4 @@
-// Coupon codes, managed in /admin.html.
+// Coupon codes, managed from the reem.bi admin (login.reembir.com/admin → אתרים → תמלול → לוח ניהול).
 //
 //   percent  value% off the monthly price, for `months` months (0 = for as long as the subscription lasts)
 //   amount   value (in the site's currency) off the monthly price, same `months` rule
