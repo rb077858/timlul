@@ -161,7 +161,8 @@ async function saveSub(env, store, user, rec) {
   if (saved.synced !== signature && env.SSO_SITE_KEY && (rec.status === 'ACTIVE' || rec.status === 'CANCELLED')) {
     const dash = ssoPlan(env, user);
     // Don't overwrite a better plan the admin granted by hand.
-    const better = dash.key && rank(dash.key) > rank(rec.plan_key) && (!dash.expiresAt || dash.expiresAt > rec.paid_until);
+    const better = isUnlimited(dash.features)
+      || (dash.key && rank(dash.key) > rank(rec.plan_key) && (!dash.expiresAt || dash.expiresAt > rec.paid_until));
     if (!better) {
       try {
         await setDashboardPlan(env, user.email, rec.plan_key, rec.paid_until);
@@ -213,7 +214,13 @@ async function entitlement(env, store, user) {
   // (or the user's personal overrides when they're on the default plan).
   const sameAsDashboard = dash.key === key || (!dash.key && key === 'free');
   let plan = { ...defs[key], ...(sameAsDashboard ? pickFeatures(dash.features) : {}) };
-  if (isUnlimited(dash.features)) plan = { ...plan, credits: Infinity, strong: true, email: true, unlimited: true };
+  // Unlimited (the hidden dashboard plan timlul:unlimited, or a personal permission) isn't one of the
+  // site's plans: it isn't offered anywhere, it only shows as the user's plan name.
+  if (isUnlimited(dash.features)) {
+    plan = { ...plan, name: 'ללא הגבלה', credits: Infinity, strong: true, email: true, unlimited: true };
+    const exp = user.access?.plan_expires_at;
+    if (user.access?.plan?.id === clientId(env) + ':unlimited' && exp) planExpiresAt = exp * 1000;
+  }
   return { key, plan, source, periodStart, periodEnd, planExpiresAt, sub };
 }
 
@@ -328,6 +335,7 @@ async function redeemGift(request, env, store, user) {
 
   const key = coupon.plan_keys[0];
   const ent = await entitlement(env, store, user);
+  if (ent.plan.unlimited) return json({ error: 'has_plan', message: 'כבר יש לך גישה ללא הגבלה' }, 400);
   if (ent.source === 'paypal' && rank(ent.key) >= rank(key)) {
     return json({ error: 'has_plan', message: 'כבר יש לך מנוי בתשלום לתוכנית הזו או לתוכנית גבוהה יותר' }, 400);
   }

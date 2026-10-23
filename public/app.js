@@ -126,7 +126,9 @@ function renderQuota() {
   let detail = me.unlimited
     ? `נוצלו ${fmtMinutes(me.used)} דקות. ללא הגבלה. `
     : `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
-  if (me.plan.source === 'dashboard') {
+  if (me.unlimited) {
+    if (me.planExpiresAt) detail += `בתוקף עד ${fmtDate(me.planExpiresAt)}`;
+  } else if (me.plan.source === 'dashboard') {
     if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
     detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
   } else if (active) detail += `חידוש ב-${fmtDate(me.periodEnd)}`;
@@ -155,7 +157,7 @@ function applyFeatures() {
 let plansSignature = null;
 
 function planSignature() {
-  return me ? [me.plan.key, me.subscription?.status || '', coupon?.code || ''].join(':') : null;
+  return me ? [me.plan.key, me.subscription?.status || '', coupon?.code || '', me.unlimited].join(':') : null;
 }
 
 function renderPlans() {
@@ -168,7 +170,7 @@ function renderPlans() {
 
   for (const plan of config.plans) {
     const card = document.createElement('div');
-    card.className = 'plan' + (plan.key === 'pro' ? ' featured' : '') + (me && me.plan.key === plan.key ? ' current' : '');
+    card.className = 'plan' + (plan.key === 'pro' ? ' featured' : '') + (me && !me.unlimited && me.plan.key === plan.key ? ' current' : '');
     if (plan.key === 'pro') card.append(el('span', 'plan-badge', 'הכי משתלם'));
     card.append(el('h3', '', plan.name));
     const offer = coupon?.offers?.[plan.key] && !(me && me.plan.key === plan.key) ? coupon.offers[plan.key] : null;
@@ -190,7 +192,9 @@ function renderPlans() {
     if (plan.price) ul.append(el('li', '', `כ-${(plan.price / plan.credits * 100).toFixed(0)} אג׳ לדקה`));
     card.append(ul);
 
-    if (me && me.plan.key === plan.key) {
+    if (me?.unlimited) {
+      if (plan.price) card.append(el('div', 'state', 'יש לך גישה ללא הגבלה'));
+    } else if (me && me.plan.key === plan.key) {
       card.append(el('div', 'state', 'התוכנית הנוכחית שלך'));
     } else if (plan.price) {
       const slot = el('div', 'pp', '');

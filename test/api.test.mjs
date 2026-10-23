@@ -17,6 +17,7 @@ const DASH_PLANS = [
   { id: 'timlul:basic', features: { minutes: 180 } },
   { id: 'timlul:pro', features: { minutes: 700 } }, // the dashboard overrides the 600 in plans.js
   { id: 'timlul:business', features: {} },
+  { id: 'timlul:unlimited', features: { unlimited: true } }, // hidden plan, given by hand
 ];
 const dashAccess = {}; // email -> { plan_id, plan_expires_at }
 
@@ -374,4 +375,29 @@ test('a hidden per-user "unlimited" permission gives unlimited minutes and all f
   dashAccess['vip2@example.com'] = { plan_id: null, override: { minutes: -1 } };
   assert.equal((await me('vip2@example.com')).unlimited, true);
   assert.equal((await me('a@example.com')).unlimited, false);
+});
+
+test('the hidden timlul:unlimited dashboard plan: named "ללא הגבלה", never offered or overwritten', async () => {
+  const user = 'boss2@example.com';
+  dashAccess[user] = { plan_id: 'timlul:unlimited', plan_expires_at: Math.floor(Date.now() / 1000) + 86400 };
+  let m = await me(user);
+  assert.ok(m.planExpiresAt > Date.now(), 'shows until when');
+  assert.equal(m.unlimited, true);
+  assert.equal(m.plan.name, 'ללא הגבלה');
+  assert.equal(m.remaining, null);
+
+  const c = await (await mf.dispatchFetch(BASE + '/api/config')).json();
+  assert.ok(!c.plans.some(p => p.key === 'unlimited'), 'not on the pricing page');
+  const stats = await (await mf.dispatchFetch(BASE + '/api/admin/stats', { headers: as('boss@example.com') })).json();
+  assert.ok(!('unlimited' in stats.plans));
+
+  // Paying for a plan doesn't replace the unlimited plan in the dashboard.
+  activeSub('I-U1', 'P-9', user);
+  m = await (await post('/api/subscription/activate', user, { subscriptionId: 'I-U1' })).json();
+  assert.equal(m.unlimited, true);
+  assert.equal(dashAccess[user].plan_id, 'timlul:unlimited');
+
+  await post('/api/admin/coupons', 'boss@example.com', { code: 'GIFTU', type: 'gift', months: 1, plan_keys: ['basic'] });
+  assert.equal((await post('/api/coupon/redeem', user, { code: 'GIFTU' })).status, 400);
+  assert.equal(dashAccess[user].plan_id, 'timlul:unlimited');
 });
