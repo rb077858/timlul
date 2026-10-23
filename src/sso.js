@@ -48,9 +48,15 @@ export function ssoPlan(env, user) {
 }
 
 // Only these feature names are read from the dashboard JSON.
+// Unlimited minutes for one user: {"unlimited": true} (or {"minutes": -1}) in their
+// personal permissions in the dashboard. Not a plan, nobody else sees it.
+export function isUnlimited(f) {
+  return f.unlimited === true || Number(f.minutes) === -1;
+}
+
 export function pickFeatures(f) {
   const out = {};
-  if (Number.isFinite(Number(f.minutes)) && f.minutes !== null && f.minutes !== '') out.credits = Math.max(0, Number(f.minutes));
+  if (Number.isFinite(Number(f.minutes)) && f.minutes !== null && f.minutes !== '' && Number(f.minutes) >= 0) out.credits = Number(f.minutes);
   if (typeof f.strong === 'boolean') out.strong = f.strong;
   if (typeof f.email === 'boolean') out.email = f.email;
   return out;

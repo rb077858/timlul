@@ -5,7 +5,7 @@ import {
 import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
 import { sendTranscriptEmail } from './mail.js';
 import {
-  authenticate, forgetUser, ssoPlan, pickFeatures, planDefs, dashboardPlans, setDashboardPlan, clientId,
+  authenticate, forgetUser, ssoPlan, pickFeatures, isUnlimited, planDefs, dashboardPlans, setDashboardPlan, clientId,
 } from './sso.js';
 import {
   validateCoupon, couponOffer, couponLabel, couponProblem, billingCycles, normalizeCode,
@@ -212,7 +212,8 @@ async function entitlement(env, store, user) {
   // Per-plan settings, plus whatever the dashboard sets for this user on this plan
   // (or the user's personal overrides when they're on the default plan).
   const sameAsDashboard = dash.key === key || (!dash.key && key === 'free');
-  const plan = { ...defs[key], ...(sameAsDashboard ? pickFeatures(dash.features) : {}) };
+  let plan = { ...defs[key], ...(sameAsDashboard ? pickFeatures(dash.features) : {}) };
+  if (isUnlimited(dash.features)) plan = { ...plan, credits: Infinity, strong: true, email: true, unlimited: true };
   return { key, plan, source, periodStart, periodEnd, planExpiresAt, sub };
 }
 
@@ -221,10 +222,11 @@ async function accountState(env, store, user) {
   const used = await store.usedSince(user.email, ent.periodStart);
   return {
     user: { email: user.email, name: user.name },
-    plan: { key: ent.key, name: ent.plan.name, credits: ent.plan.credits, source: ent.source },
+    plan: { key: ent.key, name: ent.plan.name, credits: ent.plan.unlimited ? null : ent.plan.credits, source: ent.source },
+    unlimited: !!ent.plan.unlimited,
     features: { strong: !!ent.plan.strong, email: !!ent.plan.email },
     used: Math.round(used * 100) / 100,
-    remaining: Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100),
+    remaining: ent.plan.unlimited ? null : Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100),
     periodEnd: ent.periodEnd,
     planExpiresAt: ent.planExpiresAt,
     subscription: ent.sub ? { status: ent.sub.status, planKey: ent.sub.plan_key, paidUntil: ent.sub.paid_until } : null,

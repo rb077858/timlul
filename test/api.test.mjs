@@ -357,3 +357,21 @@ test('the one-time cleanup removed the TEST coupon and a new TEST can be created
   const list = (await (await mf.dispatchFetch(BASE + '/api/admin/coupons', { headers: as(admin) })).json()).coupons;
   assert.ok(list.some(c => c.code === 'TEST'), 'cleanup runs once, not on every start');
 });
+
+test('a hidden per-user "unlimited" permission gives unlimited minutes and all features', async () => {
+  const user = 'vip@example.com';
+  dashAccess[user] = { plan_id: null, override: { unlimited: true } }; // on the free default plan
+  const m = await me(user);
+  assert.equal(m.unlimited, true);
+  assert.equal(m.remaining, null);
+  assert.equal(m.plan.key, 'free', 'not a plan: the user stays on their plan');
+  assert.deepEqual(m.features, { strong: true, email: true });
+  for (let i = 0; i < 4; i++) { // 4 pieces of 5 minutes on the accurate model = 40 credits, far over the free 10
+    assert.equal((await transcribe(user, 5 * 60, 'strong')).status, 200);
+  }
+  assert.equal((await me(user)).used, 40, 'usage is still recorded for the cost stats');
+
+  dashAccess['vip2@example.com'] = { plan_id: null, override: { minutes: -1 } };
+  assert.equal((await me('vip2@example.com')).unlimited, true);
+  assert.equal((await me('a@example.com')).unlimited, false);
+});

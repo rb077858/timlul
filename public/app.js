@@ -117,13 +117,15 @@ function fmtMinutes(n) {
 function renderQuota() {
   if (!me) return;
   $('planName').textContent = me.plan.name;
-  $('remaining').textContent = fmtMinutes(me.remaining);
-  const pct = me.plan.credits ? Math.min(100, (me.used / me.plan.credits) * 100) : 100;
+  $('remaining').textContent = me.unlimited ? '∞' : fmtMinutes(me.remaining);
+  const pct = me.unlimited ? 0 : me.plan.credits ? Math.min(100, (me.used / me.plan.credits) * 100) : 100;
   $('quotaBar').style.width = pct + '%';
 
   const sub = me.subscription;
   const active = sub && sub.status === 'ACTIVE' && me.plan.key !== 'free';
-  let detail = `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
+  let detail = me.unlimited
+    ? `נוצלו ${fmtMinutes(me.used)} דקות. ללא הגבלה. `
+    : `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
   if (me.plan.source === 'dashboard') {
     if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
     detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}`;
@@ -354,7 +356,7 @@ async function start() {
     const needed = (totalSeconds / 60) * weight;
 
     await refreshMe();
-    if (me && needed > me.remaining + 0.01) {
+    if (me && !me.unlimited && needed > me.remaining + 0.01) {
       throw new Error(`הקובץ צריך ${fmtMinutes(needed)} דקות מהמכסה, ונותרו לך ${fmtMinutes(me.remaining)}. ` +
         (kind === 'strong' ? 'אפשר לנסות את המודל המהיר, או ' : '') + 'לשדרג תוכנית למטה.');
     }
