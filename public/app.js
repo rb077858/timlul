@@ -147,6 +147,7 @@ function renderQuota() {
 
 // A partner (reem.bi dashboard → Partners) sees their link and code, and who joined through it.
 function renderPartner() {
+  renderPartnerJoin();
   const box = $('partnerBox');
   const a = me?.affiliate;
   box.hidden = !a || !a.active;
@@ -159,6 +160,34 @@ function renderPartner() {
   $('partnerCopy').onclick = () => navigator.clipboard.writeText(a.link).then(() => toast('הקישור הועתק ✓'), () => $('partnerLink').select());
   $('partnerShare').hidden = !navigator.share;
   $('partnerShare').onclick = () => navigator.share({ title: 'תמלול', text: 'תמלול אודיו לטקסט בעברית', url: a.link }).catch(() => {});
+}
+
+// Not a partner yet, and the program is open to everyone: a card to join (a random code is made).
+function renderPartnerJoin() {
+  const box = $('partnerJoin');
+  const p = me?.partnerProgram;
+  box.hidden = !p || !!me.affiliate;
+  if (box.hidden) return;
+  const parts = [];
+  if (p.label) parts.push(`חברים שמצטרפים דרככם מקבלים: ${p.label}.`);
+  if (p.rewardMinutes) {
+    parts.push(`ואתם מקבלים ${p.rewardMinutes.toLocaleString('he-IL')} דקות תמלול ${p.rewardOn === 'paid' ? 'על כל חבר שנרשם למנוי או קונה חבילה' : 'על כל חבר שמצטרף'}.`);
+  }
+  $('partnerJoinText').textContent = parts.join(' ') || 'קבלו קישור אישי לשיתוף עם חברים.';
+  const btn = $('partnerJoinBtn');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      await auth.affiliate.join();
+      await refreshMe(true);
+      renderQuota();
+      toast('הצטרפת לתוכנית השותפים! 🎉');
+    } catch (e) {
+      if (e.message !== 'login') toast(e.message || 'לא הצלחנו לצרף אותך, נסו שוב');
+    } finally {
+      btn.disabled = false;
+    }
+  };
 }
 
 // The free plan has no accurate model and no email.

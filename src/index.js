@@ -106,8 +106,8 @@ function publicConfig(env) {
 
 // The minutes renew at the start of every calendar month.
 async function entitlement(env, store, user) {
-  const { plan, expiresAt, subscription, packs, affiliate } = userPlan(env, user);
-  return { plan, expiresAt, subscription, packs, affiliate, periodStart: monthStart(), periodEnd: nextMonthStart() };
+  const { plan, expiresAt, subscription, packs, affiliate, affiliateProgram } = userPlan(env, user);
+  return { plan, expiresAt, subscription, packs, affiliate, affiliateProgram, periodStart: monthStart(), periodEnd: nextMonthStart() };
 }
 
 // Extra minutes (packs + partner-program gifts) form one pool, used after the monthly quota.
@@ -137,6 +137,12 @@ async function accountState(env, store, user) {
     // Pack minutes stay while the plan doesn't allow packs, but can't be used until it does again.
     packs: { allowed, balance, usable, bonus: ent.packs.bonus },
     affiliate: ent.affiliate,
+    // Users may join the partner program by themselves (reem.bi dashboard → Partners).
+    partnerProgram: ent.affiliateProgram && ent.affiliateProgram.self_join ? {
+      label: String(ent.affiliateProgram.label || ''),
+      rewardMinutes: Number(ent.affiliateProgram.reward?.minutes) > 0 ? Number(ent.affiliateProgram.reward.minutes) : 0,
+      rewardOn: ent.affiliateProgram.reward_on === 'paid' ? 'paid' : 'signup',
+    } : null,
     periodEnd: ent.periodEnd,
     planExpiresAt: ent.expiresAt,
     subscription: ent.subscription,

@@ -33,6 +33,7 @@ function accessFor(email) {
     packs: { eligible: PACK_PLANS.includes(planId), totals: a.packs ? { minutes: a.packs } : {}, count: a.packs ? 1 : 0 },
     rewards: { totals: a.bonus ? { minutes: a.bonus } : {}, count: a.bonus ? 1 : 0 },
     affiliate: a.affiliate || null,
+    affiliate_program: a.program || null,
   };
 }
 
@@ -281,6 +282,12 @@ test('partner program: gift minutes work on every plan, and a partner sees their
   m = await me(biz, true);
   assert.deepEqual(m.packs, { allowed: false, balance: 150, usable: 50, bonus: 50 });
   assert.equal(m.remaining, 50);
+
+  assert.equal(m.partnerProgram, null, 'no program');
+  dash[user].program = { self_join: false, label: 'מתנה: 30 דקות', reward: { minutes: 300 }, reward_on: 'paid' };
+  assert.equal((await me(user, true)).partnerProgram, null, 'the program is on, but joining is by the admin');
+  dash[user].program.self_join = true;
+  assert.deepEqual((await me(user, true)).partnerProgram, { label: 'מתנה: 30 דקות', rewardMinutes: 300, rewardOn: 'paid' });
 
   dash[user].affiliate = { code: 'DANA', link: 'https://login.reembir.com/join/DANA', active: true, referrals: 2, paid: 1 };
   m = await me(user, true);

@@ -67,5 +67,7 @@ export function userPlan(env, user) {
     packs: { eligible: !!p.eligible && !plan.unlimited, bought: minutes(p.totals?.minutes), bonus },
     // The user's own partner code and link, when they are a partner.
     affiliate: access.affiliate && typeof access.affiliate === 'object' ? access.affiliate : null,
+    // The site's partner program while it's on: { self_join, label, reward, reward_on }.
+    affiliateProgram: access.affiliate_program && typeof access.affiliate_program === 'object' ? access.affiliate_program : null,
   };
 }
