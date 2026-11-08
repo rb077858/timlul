@@ -56,11 +56,16 @@ export function userPlan(env, user) {
   // Extra-minute packs, sold by reem.bi (dashboard → Packs, {"minutes": 100}): the minutes bought
   // in total, and whether the user's plan is one the packs are for (otherwise they're frozen).
   const p = access.packs && typeof access.packs === 'object' ? access.packs : {};
-  const bought = Number(p.totals?.minutes);
+  const minutes = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
+  // Minutes from reem.bi's partner program (dashboard → Partners): a gift for joining through a
+  // partner, or a partner's reward. Unlike packs they work on every plan.
+  const bonus = minutes(access.rewards?.totals?.minutes);
   return {
     plan,
     expiresAt: access.plan_expires_at ? access.plan_expires_at * 1000 : null,
     subscription: access.subscription || null,
-    packs: { eligible: !!p.eligible && !plan.unlimited, bought: Number.isFinite(bought) && bought > 0 ? bought : 0 },
+    packs: { eligible: !!p.eligible && !plan.unlimited, bought: minutes(p.totals?.minutes), bonus },
+    // The user's own partner code and link, when they are a partner.
+    affiliate: access.affiliate && typeof access.affiliate === 'object' ? access.affiliate : null,
   };
 }

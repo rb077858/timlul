@@ -106,8 +106,14 @@ function publicConfig(env) {
 
 // The minutes renew at the start of every calendar month.
 async function entitlement(env, store, user) {
-  const { plan, expiresAt, subscription, packs } = userPlan(env, user);
-  return { plan, expiresAt, subscription, packs, periodStart: monthStart(), periodEnd: nextMonthStart() };
+  const { plan, expiresAt, subscription, packs, affiliate } = userPlan(env, user);
+  return { plan, expiresAt, subscription, packs, affiliate, periodStart: monthStart(), periodEnd: nextMonthStart() };
+}
+
+// Extra minutes (packs + partner-program gifts) form one pool, used after the monthly quota.
+// Pack minutes count only while the plan allows packs; gift minutes always count.
+function extraTotals(ent) {
+  return { all: ent.packs.bought + ent.packs.bonus, usable: (ent.packs.eligible ? ent.packs.bought : 0) + ent.packs.bonus };
 }
 
 async function accountState(env, store, user) {
@@ -115,7 +121,9 @@ async function accountState(env, store, user) {
   const used = await store.usedSince(user.email, ent.periodStart);
   const unlimited = !!ent.plan.unlimited;
   const allowed = ent.packs.eligible;
-  const balance = Math.round((await store.packBalance(user.email, ent.packs.bought)) * 100) / 100;
+  const extra = extraTotals(ent);
+  const balance = Math.round((await store.packBalance(user.email, extra.all)) * 100) / 100;
+  const usable = Math.round((await store.packBalance(user.email, extra.usable)) * 100) / 100;
   const planRemaining = unlimited ? null : Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100);
   return {
     user: { email: user.email, name: user.name },
@@ -124,10 +132,11 @@ async function accountState(env, store, user) {
     features: { strong: !!ent.plan.strong, email: !!ent.plan.email },
     used: Math.round(used * 100) / 100,
     // What can be transcribed now: the month's quota plus usable pack minutes.
-    remaining: unlimited ? null : Math.round((planRemaining + (allowed ? balance : 0)) * 100) / 100,
+    remaining: unlimited ? null : Math.round((planRemaining + usable) * 100) / 100,
     planRemaining,
     // Pack minutes stay while the plan doesn't allow packs, but can't be used until it does again.
-    packs: { allowed, balance },
+    packs: { allowed, balance, usable, bonus: ent.packs.bonus },
+    affiliate: ent.affiliate,
     periodEnd: ent.periodEnd,
     planExpiresAt: ent.expiresAt,
     subscription: ent.subscription,
@@ -166,7 +175,7 @@ async function transcribe(request, env, store, user, url) {
   const credits = (seconds / 60) * (kind === 'strong' ? STRONG_WEIGHT : 1);
   const limit = ent.plan.credits;
   const usePacks = ent.packs.eligible;
-  const reservation = await store.reserve(user.email, ent.periodStart, limit, kind, seconds, credits, usePacks ? ent.packs.bought : 0);
+  const reservation = await store.reserve(user.email, ent.periodStart, limit, kind, seconds, credits, extraTotals(ent).usable);
   if (!reservation.ok) {
     reader.cancel().catch(() => {});
     const message = usePacks
@@ -240,7 +249,7 @@ async function adminManifest(env, store) {
       { label: 'דקות החודש (מהיר)', value: minutes('fast') },
       { label: 'דקות החודש (מדויק)', value: minutes('strong') },
       { label: 'עלות OpenAI החודש', value: '$' + Math.round(costUsd * 100) / 100 },
-      { label: 'דקות מחבילות החודש', value: Math.round(d.packMinutes) },
+      { label: 'דקות נוספות החודש (חבילות ומתנות)', value: Math.round(d.packMinutes) },
     ],
     checks: [
       ...Object.entries(configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Worker timlul ← Variables and Secrets' })),

@@ -17,7 +17,7 @@ const PLANS = {
   'timlul:business': { name: 'עסקי', features: { minutes: 3, strong: true, email: true } },
   'timlul:unlimited': { name: 'ללא הגבלה', features: { unlimited: true } },
 };
-const dash = {}; // email -> { plan, expires, override, subscription, packs }
+const dash = {}; // email -> { plan, expires, override, subscription, packs, bonus, affiliate }
 // reem.bi's packs: the business plan may buy them; userinfo reports the minutes bought in total.
 const PACK_PLANS = ['timlul:business'];
 
@@ -31,6 +31,8 @@ function accessFor(email) {
     features: { ...PLANS[planId].features, ...(a.override || {}) },
     subscription: a.subscription || null,
     packs: { eligible: PACK_PLANS.includes(planId), totals: a.packs ? { minutes: a.packs } : {}, count: a.packs ? 1 : 0 },
+    rewards: { totals: a.bonus ? { minutes: a.bonus } : {}, count: a.bonus ? 1 : 0 },
+    affiliate: a.affiliate || null,
   };
 }
 
@@ -216,13 +218,13 @@ test('packs bought in reem.bi: used after the monthly quota, only on the plan th
   const user = 'biz@example.com';
   dash[user] = { plan: 'timlul:business' };
   let m = await me(user);
-  assert.deepEqual(m.packs, { allowed: true, balance: 0 });
+  assert.deepEqual(m.packs, { allowed: true, balance: 0, usable: 0, bonus: 0 });
   assert.equal(m.remaining, 3);
 
   // Bought 100 minutes (reem.bi reports it; the site asks fresh right after paying).
   dash[user].packs = 100;
   m = await me(user, true);
-  assert.deepEqual(m.packs, { allowed: true, balance: 100 });
+  assert.deepEqual(m.packs, { allowed: true, balance: 100, usable: 100, bonus: 0 });
   assert.equal(m.remaining, 103);
   assert.equal(m.planRemaining, 3);
 
@@ -232,7 +234,7 @@ test('packs bought in reem.bi: used after the monthly quota, only on the plan th
   m = await me(user);
   assert.equal(m.used, 3);
   assert.equal(m.planRemaining, 0);
-  assert.deepEqual(m.packs, { allowed: true, balance: 97 });
+  assert.deepEqual(m.packs, { allowed: true, balance: 97, usable: 97, bonus: 0 });
   assert.equal(m.remaining, 97);
 
   // A failed transcription gives the pack minutes back.
@@ -248,13 +250,41 @@ test('packs bought in reem.bi: used after the monthly quota, only on the plan th
   // Off the business plan the pack minutes are kept but can't be used.
   dash[user].plan = 'timlul:basic';
   m = await me(user, true);
-  assert.deepEqual(m.packs, { allowed: false, balance: 397 });
+  assert.deepEqual(m.packs, { allowed: false, balance: 397, usable: 0, bonus: 0 });
   assert.equal(m.remaining, m.planRemaining);
   dash[user].plan = 'timlul:free';
   await me(user, true);
   assert.equal((await transcribe(user, 11 * 60)).status, 402, 'the free quota is 10 and packs are frozen');
   dash[user].plan = 'timlul:business';
   assert.equal((await me(user, true)).remaining, 397, 'back with the plan');
+});
+
+test('partner program: gift minutes work on every plan, and a partner sees their link', async () => {
+  const user = 'friend@example.com';
+  dash[user] = { plan: 'timlul:free', override: { minutes: 1 }, bonus: 5 };
+  let m = await me(user);
+  assert.deepEqual(m.packs, { allowed: false, balance: 5, usable: 5, bonus: 5 });
+  assert.equal(m.remaining, 6);
+  assert.equal(m.affiliate, null);
+  assert.equal((await transcribe(user, 3 * 60)).status, 200, '1 from the quota, 2 from the gift');
+  m = await me(user);
+  assert.equal(m.packs.usable, 3);
+  assert.equal((await transcribe(user, 4 * 60)).status, 402, 'only 3 left');
+
+  // A business user with packs and gift minutes; off the plan only the gift part is usable.
+  const biz = 'bizfriend@example.com';
+  dash[biz] = { plan: 'timlul:business', override: { minutes: 0 }, packs: 100, bonus: 50 };
+  m = await me(biz);
+  assert.deepEqual(m.packs, { allowed: true, balance: 150, usable: 150, bonus: 50 });
+  dash[biz].plan = 'timlul:basic';
+  dash[biz].override = { minutes: 0 };
+  m = await me(biz, true);
+  assert.deepEqual(m.packs, { allowed: false, balance: 150, usable: 50, bonus: 50 });
+  assert.equal(m.remaining, 50);
+
+  dash[user].affiliate = { code: 'DANA', link: 'https://login.reembir.com/join/DANA', active: true, referrals: 2, paid: 1 };
+  m = await me(user, true);
+  assert.equal(m.affiliate.link, 'https://login.reembir.com/join/DANA');
 });
 
 test('out of minutes: business users are told about packs, others are not', async () => {
@@ -288,7 +318,7 @@ test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir
   const m = await res.json();
   assert.equal(m.version, 1);
   assert.ok(m.stats.find(s => s.label === 'עלות OpenAI החודש'));
-  assert.equal(m.stats.find(s => s.label === 'דקות מחבילות החודש').value, 3);
+  assert.equal(m.stats.find(s => s.label === 'דקות נוספות החודש (חבילות ומתנות)').value, 5);
   assert.ok(m.checks.find(c => c.label === 'OPENAI_API_KEY').ok);
   assert.equal(m.coupons, undefined, 'coupons are managed by reem.bi now');
   assert.ok(m.lists[0].items.some(i => i.title === 'vip@example.com'));

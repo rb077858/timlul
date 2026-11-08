@@ -62,6 +62,17 @@
         </div>
       </div>
 
+      <div id="partnerBox" class="card partner" hidden>
+        <h2>הקישור שלך לשיתוף</h2>
+        <p class="muted small">מי שמצטרף דרך הקישור, או עם הקוד <b id="partnerCode" dir="ltr"></b>, נרשם כחבר שהבאת.</p>
+        <div class="coupon">
+          <input id="partnerLink" type="text" readonly dir="ltr" aria-label="הקישור שלך">
+          <button id="partnerCopy" class="btn btn-ghost">העתקה</button>
+          <button id="partnerShare" class="btn btn-ghost" hidden>שיתוף</button>
+        </div>
+        <p id="partnerStats" class="muted small"></p>
+      </div>
+
       <div class="card">
         <h2>1. בחירת קובץ</h2>
         <label id="drop" class="drop">

@@ -132,15 +132,33 @@ function renderQuota() {
   else if (sub && sub.status === 'CANCELLED') detail += `המנוי בוטל ופעיל עד ${fmtDate(sub.paid_until * 1000)}. `;
   else if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
   if (!me.unlimited) detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}. `;
-  const packs = me.packs?.balance || 0;
-  if (packs > 0 && !me.unlimited) {
-    detail += me.packs.allowed
-      ? `כולל ${fmtMinutes(packs)} דקות מחבילות, שנכנסות לפעולה אחרי המכסה החודשית.`
-      : `${fmtMinutes(packs)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
+  const extra = me.packs?.balance || 0;
+  const usable = me.packs?.usable ?? (me.packs?.allowed ? extra : 0);
+  if (extra > 0 && !me.unlimited) {
+    if (usable >= extra - 0.01) detail += `כולל ${fmtMinutes(extra)} דקות נוספות, שנכנסות לפעולה אחרי המכסה החודשית.`;
+    else if (usable > 0) detail += `כולל ${fmtMinutes(usable)} דקות נוספות. עוד ${fmtMinutes(extra - usable)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
+    else detail += `${fmtMinutes(extra)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
   }
   $('quotaDetail').textContent = detail;
+  renderPartner();
   $('cancelBtn').hidden = !active;
   applyFeatures();
+}
+
+// A partner (reem.bi dashboard → Partners) sees their link and code, and who joined through it.
+function renderPartner() {
+  const box = $('partnerBox');
+  const a = me?.affiliate;
+  box.hidden = !a || !a.active;
+  if (box.hidden) return;
+  $('partnerLink').value = a.link;
+  $('partnerCode').textContent = a.code;
+  $('partnerStats').textContent = a.referrals
+    ? `הצטרפו דרכך ${a.referrals}${a.paid ? `, ${a.paid} מהם עם מנוי או חבילה` : ''}. תודה!`
+    : 'עוד לא הצטרפו דרכך. שתפו את הקישור!';
+  $('partnerCopy').onclick = () => navigator.clipboard.writeText(a.link).then(() => toast('הקישור הועתק ✓'), () => $('partnerLink').select());
+  $('partnerShare').hidden = !navigator.share;
+  $('partnerShare').onclick = () => navigator.share({ title: 'תמלול', text: 'תמלול אודיו לטקסט בעברית', url: a.link }).catch(() => {});
 }
 
 // The free plan has no accurate model and no email.
@@ -555,7 +573,15 @@ async function applyCoupon(code) {
   $('couponBtn').disabled = true;
   try {
     coupon = await auth.billing.checkCoupon(code);
-    if (coupon.type === 'gift') {
+    if (coupon.type === 'referral') {
+      // A partner's code: just say who sent you (and any gift). It's applied right away.
+      const label = coupon.label;
+      await auth.billing.redeem(coupon.code);
+      clearCoupon();
+      couponMessage('✓ ' + label);
+      await refreshMe(true);
+      renderQuota();
+    } else if (coupon.type === 'gift') {
       couponMessage('🎁 ' + coupon.label);
       const btn = el('button', 'btn btn-primary', 'הפעלת המתנה');
       btn.style.marginInlineStart = '10px';
