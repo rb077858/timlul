@@ -172,6 +172,11 @@ textarea { resize: vertical; line-height: 1.7; }
 .plan .pp { min-height: 44px; }
 .plan .state { font-weight: 600; color: var(--success); text-align: center; padding: 10px 0; }
 
+.packs { margin: 26px 0 8px; padding-top: 22px; border-top: 1px solid var(--border); }
+.packs-title { text-align: center; font-size: 1.25rem; font-weight: 800; margin: 0 0 6px; }
+.packs .plans { margin-top: 16px; }
+.packs .price { font-size: 1.7rem; }
+
 .coupon { display: flex; gap: 8px; max-width: 380px; margin: 18px auto 0; }
 .coupon input { text-transform: uppercase; }
 .old-price { display: block; font-size: .95rem; font-weight: 500; color: var(--muted); line-height: 1.2; }

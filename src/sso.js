@@ -40,6 +40,7 @@ function pickFeatures(f) {
   if (f.minutes !== null && f.minutes !== '' && Number.isFinite(Number(f.minutes)) && Number(f.minutes) >= 0) out.credits = Number(f.minutes);
   if (typeof f.strong === 'boolean') out.strong = f.strong;
   if (typeof f.email === 'boolean') out.email = f.email;
+  if (typeof f.packs === 'boolean') out.packs = f.packs;
   return out;
 }
 
