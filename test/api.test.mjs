@@ -8,11 +8,6 @@ import { encodeWav, planChunks, SAMPLE_RATE } from '../public/audio.js';
 const calls = [];
 let openaiFails = false;
 
-// PayPal (sandbox): one-time orders for the minute packs.
-const orders = {}; // id -> { body, captured }
-let paypalPays = true;
-let orderSeq = 0;
-
 // reem.bi: the plans of the site and each user's access, as /api/userinfo reports them.
 const PLANS = {
   'timlul:free': { name: 'חינם', features: { minutes: 10, strong: false, email: false } },
@@ -22,7 +17,9 @@ const PLANS = {
   'timlul:business': { name: 'עסקי', features: { minutes: 3, strong: true, email: true } },
   'timlul:unlimited': { name: 'ללא הגבלה', features: { unlimited: true } },
 };
-const dash = {}; // email -> { plan, expires, override, subscription }
+const dash = {}; // email -> { plan, expires, override, subscription, packs }
+// reem.bi's packs: the business plan may buy them; userinfo reports the minutes bought in total.
+const PACK_PLANS = ['timlul:business'];
 
 function accessFor(email) {
   const a = dash[email] || {};
@@ -33,6 +30,7 @@ function accessFor(email) {
     plan_expires_at: a.expires || null,
     features: { ...PLANS[planId].features, ...(a.override || {}) },
     subscription: a.subscription || null,
+    packs: { eligible: PACK_PLANS.includes(planId), totals: a.packs ? { minutes: a.packs } : {}, count: a.packs ? 1 : 0 },
   };
 }
 
@@ -53,34 +51,6 @@ async function mock(req) {
     if (openaiFails) return Response.json({ error: { message: 'boom' } }, { status: 500 });
     return Response.json({ text: ' שלום עולם ' });
   }
-  if (url.host === 'api-m.sandbox.paypal.com') {
-    if (url.pathname === '/v1/oauth2/token') {
-      assert.equal(auth, 'Basic ' + btoa('pp-id:pp-secret'));
-      return Response.json({ access_token: 'pp-token', expires_in: 3600 });
-    }
-    if (auth !== 'Bearer pp-token') return Response.json({ message: 'no' }, { status: 401 });
-    const view = (id, o) => {
-      const u = o.body.purchase_units[0];
-      return {
-        id, status: o.captured ? 'COMPLETED' : 'APPROVED',
-        purchase_units: [{ ...u, payments: o.captured ? { captures: [{ status: 'COMPLETED', amount: u.amount }] } : undefined }],
-      };
-    };
-    if (url.pathname === '/v2/checkout/orders' && req.method === 'POST') {
-      const id = 'ORDER' + (++orderSeq);
-      orders[id] = { body: await req.json(), captured: false };
-      return Response.json({ id, status: 'CREATED' }, { status: 201 });
-    }
-    const m = url.pathname.match(/^\/v2\/checkout\/orders\/([^/]+)(\/capture)?$/);
-    const o = m && orders[m[1]];
-    if (!o) return Response.json({ message: 'not found' }, { status: 404 });
-    if (m[2]) {
-      if (o.captured) return Response.json({ name: 'UNPROCESSABLE_ENTITY', details: [{ issue: 'ORDER_ALREADY_CAPTURED' }] }, { status: 422 });
-      if (!paypalPays) return Response.json({ name: 'UNPROCESSABLE_ENTITY', message: 'INSTRUMENT_DECLINED', details: [{ issue: 'INSTRUMENT_DECLINED' }] }, { status: 422 });
-      o.captured = true;
-    }
-    return Response.json(view(m[1], o));
-  }
   if (url.host === 'login.reembir.com' && url.pathname === '/api/email/me') {
     if (!/^Bearer tok-/.test(auth)) return Response.json({ message: 'no' }, { status: 401 });
     calls.at(-1).json = await req.json();
@@ -99,7 +69,6 @@ before(async () => {
     durableObjects: { STORE: { className: 'Store', useSQLite: true } },
     bindings: {
       OPENAI_API_KEY: 'sk-test', ADMIN_EMAILS: 'boss@example.com',
-      PAYPAL_CLIENT_ID: 'pp-id', PAYPAL_CLIENT_SECRET: 'pp-secret', PAYPAL_ENV: 'sandbox',
     },
     serviceBindings: { ASSETS: () => new Response('asset') },
     outboundService: mock,
@@ -243,54 +212,19 @@ test('failed transcription is not charged', async () => {
   assert.equal((await me('c@example.com')).used, 0);
 });
 
-test('config lists the packs, each pricier per minute than any monthly plan', async () => {
-  const c = await (await mf.dispatchFetch(BASE + '/api/config')).json();
-  assert.deepEqual(c.packs.plans, ['business']);
-  assert.equal(c.packs.currency, 'ILS');
-  assert.deepEqual(c.packs.paypal, { clientId: 'pp-id', env: 'sandbox' });
-  assert.deepEqual(c.packs.list.map(p => [p.credits, p.price]), [[100, 8], [300, 21], [1000, 60]]);
-  // Monthly plans: basic ₪9/180, pro ₪19/600, business ₪39/1500. The cheapest is 5 ag a minute.
-  for (const p of c.packs.list) assert.ok(p.price / p.credits > 9 / 180, `pack ${p.key} must cost more per minute`);
-});
-
-test('packs: only the business plan can buy; minutes are used after the monthly quota', async () => {
+test('packs bought in reem.bi: used after the monthly quota, only on the plan they are for', async () => {
   const user = 'biz@example.com';
-  // A lower plan gets "upgrade" and no order is created.
-  dash[user] = { plan: 'timlul:pro' };
-  let res = await post('/api/packs/order', user, { pack: '100' });
-  assert.equal(res.status, 403);
-  assert.equal((await res.json()).error, 'upgrade');
-  assert.equal((await me(user)).packs.allowed, false);
-  assert.equal(orderSeq, 0);
-
   dash[user] = { plan: 'timlul:business' };
-  let m = await me(user, true);
+  let m = await me(user);
   assert.deepEqual(m.packs, { allowed: true, balance: 0 });
   assert.equal(m.remaining, 3);
-  assert.equal((await post('/api/packs/order', user, { pack: '42' })).status, 400);
 
-  res = await post('/api/packs/order', user, { pack: '100' });
-  assert.equal(res.status, 200);
-  const { id } = await res.json();
-  const unit = orders[id].body.purchase_units[0];
-  assert.deepEqual(unit.amount, { currency_code: 'ILS', value: '8' });
-  assert.equal(unit.custom_id, 'timlul:u-biz@example.com:100');
-  assert.equal(orders[id].body.intent, 'CAPTURE');
-
-  // Someone else can't claim this order.
-  dash['other@example.com'] = { plan: 'timlul:business' };
-  assert.equal((await post('/api/packs/capture', 'other@example.com', { orderId: id })).status, 403);
-  assert.equal((await me('other@example.com')).packs.balance, 0);
-
-  res = await post('/api/packs/capture', user, { orderId: id });
-  assert.equal(res.status, 200);
-  m = await res.json();
-  assert.equal(m.packs.balance, 100);
+  // Bought 100 minutes (reem.bi reports it; the site asks fresh right after paying).
+  dash[user].packs = 100;
+  m = await me(user, true);
+  assert.deepEqual(m.packs, { allowed: true, balance: 100 });
   assert.equal(m.remaining, 103);
   assert.equal(m.planRemaining, 3);
-  // A retry of the same order doesn't add the minutes twice.
-  assert.equal((await post('/api/packs/capture', user, { orderId: id })).status, 200);
-  assert.equal((await me(user)).packs.balance, 100);
 
   // 2 minutes from the quota; then 2 minutes accurate = 4: 1 from the quota, 3 from the pack.
   assert.equal((await transcribe(user, 120)).status, 200);
@@ -298,7 +232,7 @@ test('packs: only the business plan can buy; minutes are used after the monthly 
   m = await me(user);
   assert.equal(m.used, 3);
   assert.equal(m.planRemaining, 0);
-  assert.equal(m.packs.balance, 97);
+  assert.deepEqual(m.packs, { allowed: true, balance: 97 });
   assert.equal(m.remaining, 97);
 
   // A failed transcription gives the pack minutes back.
@@ -307,40 +241,36 @@ test('packs: only the business plan can buy; minutes are used after the monthly 
   openaiFails = false;
   assert.equal((await me(user)).packs.balance, 97);
 
-  // More than the quota and the packs left: refused, nothing charged, and told about packs.
-  res = await transcribe('other@example.com', 4 * 60);
-  assert.equal(res.status, 402);
-  assert.match((await res.json()).message, /חבילת דקות/);
-  assert.equal((await me('other@example.com')).used, 0);
+  // Another pack adds up with what's left.
+  dash[user].packs = 400;
+  assert.equal((await me(user, true)).packs.balance, 397);
 
-  // Without the business plan the pack minutes are kept but can't be used.
-  dash[user] = { plan: 'timlul:basic' };
+  // Off the business plan the pack minutes are kept but can't be used.
+  dash[user].plan = 'timlul:basic';
   m = await me(user, true);
-  assert.deepEqual(m.packs, { allowed: false, balance: 97 });
+  assert.deepEqual(m.packs, { allowed: false, balance: 397 });
   assert.equal(m.remaining, m.planRemaining);
-  dash[user] = { plan: 'timlul:free' };
+  dash[user].plan = 'timlul:free';
   await me(user, true);
-  res = await transcribe(user, 11 * 60);
-  assert.equal(res.status, 402, 'the free quota is 10 and packs are frozen');
-  dash[user] = { plan: 'timlul:business' };
-  assert.equal((await me(user, true)).remaining, 97, 'back with the plan');
+  assert.equal((await transcribe(user, 11 * 60)).status, 402, 'the free quota is 10 and packs are frozen');
+  dash[user].plan = 'timlul:business';
+  assert.equal((await me(user, true)).remaining, 397, 'back with the plan');
 });
 
-test('packs: unpaid orders add nothing; JSON {"packs": true} allows another plan', async () => {
-  const user = 'team@example.com';
-  dash[user] = { plan: 'timlul:team', override: { packs: true } };
-  const { id } = await (await post('/api/packs/order', user, { pack: '300' })).json();
-  paypalPays = false;
-  const res = await post('/api/packs/capture', user, { orderId: id });
-  paypalPays = true;
-  assert.ok(res.status >= 400);
-  assert.equal((await me(user)).packs.balance, 0);
-  assert.equal((await post('/api/packs/capture', user, { orderId: 'ORDER999' })).status, 404);
-  assert.equal((await post('/api/packs/capture', user, { orderId: id })).status, 200);
-  assert.equal((await me(user)).packs.balance, 300);
+test('out of minutes: business users are told about packs, others are not', async () => {
+  dash['biz2@example.com'] = { plan: 'timlul:business' };
+  let res = await transcribe('biz2@example.com', 4 * 60);
+  assert.equal(res.status, 402);
+  assert.match((await res.json()).message, /חבילת דקות/);
+  assert.equal((await me('biz2@example.com')).used, 0, 'nothing charged');
+
+  dash['pro2@example.com'] = { plan: 'timlul:pro', override: { minutes: 1 } };
+  res = await transcribe('pro2@example.com', 2 * 60);
+  assert.equal(res.status, 402);
+  assert.doesNotMatch((await res.json()).message, /חבילת/);
 
   dash['vip@example.com'] = { plan: 'timlul:unlimited' };
-  assert.equal((await post('/api/packs/order', 'vip@example.com', { pack: '100' })).status, 403, 'unlimited never needs packs');
+  assert.equal((await me('vip@example.com')).packs.allowed, false, 'unlimited never needs packs');
 });
 
 test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir.com', async () => {
@@ -358,9 +288,7 @@ test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir
   const m = await res.json();
   assert.equal(m.version, 1);
   assert.ok(m.stats.find(s => s.label === 'עלות OpenAI החודש'));
-  assert.equal(m.stats.find(s => s.label === 'חבילות דקות החודש').value, 2);
-  assert.equal(m.stats.find(s => s.label === 'הכנסה מחבילות החודש').value, '₪29');
-  assert.ok(m.checks.find(c => c.label === 'PAYPAL_CLIENT_SECRET').ok);
+  assert.equal(m.stats.find(s => s.label === 'דקות מחבילות החודש').value, 3);
   assert.ok(m.checks.find(c => c.label === 'OPENAI_API_KEY').ok);
   assert.equal(m.coupons, undefined, 'coupons are managed by reem.bi now');
   assert.ok(m.lists[0].items.some(i => i.title === 'vip@example.com'));

@@ -1,5 +1,4 @@
-import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, PACKS, PACK_PLANS, PACK_CURRENCY, modelIds } from './plans.js';
-import { createOrder, captureOrder, paypalEnv } from './paypal.js';
+import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, modelIds } from './plans.js';
 import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
 import { sendTranscriptEmail } from './mail.js';
 import { authenticate, userPlan, clientId } from './sso.js';
@@ -54,8 +53,6 @@ async function route(request, env, url) {
   if (path === '/api/me' && method === 'GET') return json(await accountState(env, store, user));
   if (path === '/api/transcribe' && method === 'POST') return transcribe(request, env, store, user, url);
   if (path === '/api/email' && method === 'POST') return email(request, env, store, user);
-  if (path === '/api/packs/order' && method === 'POST') return packOrder(request, env, store, user);
-  if (path === '/api/packs/capture' && method === 'POST') return packCapture(request, env, store, user);
 
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
@@ -102,37 +99,23 @@ function publicConfig(env) {
     maxUploadBytes: MAX_UPLOAD_BYTES,
     // Fallbacks for plans whose JSON in the dashboard doesn't set minutes/strong/email.
     planDefaults: PLAN_DEFAULTS,
-    packs: {
-      plans: PACK_PLANS,
-      currency: PACK_CURRENCY,
-      list: Object.entries(PACKS).map(([key, p]) => ({ key, credits: p.credits, price: p.price })),
-      // The same PayPal account as reem.bi; the site needs its keys only for the packs.
-      paypal: env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET ? { clientId: env.PAYPAL_CLIENT_ID, env: paypalEnv(env) } : null,
-    },
   };
-}
-
-// Packs are for the top plan only (lower plans should upgrade), never with unlimited.
-function packsAllowed(plan) {
-  if (plan.unlimited) return false;
-  if (typeof plan.packs === 'boolean') return plan.packs;
-  return PACK_PLANS.includes(plan.key);
 }
 
 // ---------- what the user may do ----------
 
 // The minutes renew at the start of every calendar month.
 async function entitlement(env, store, user) {
-  const { plan, expiresAt, subscription } = userPlan(env, user);
-  return { plan, expiresAt, subscription, periodStart: monthStart(), periodEnd: nextMonthStart() };
+  const { plan, expiresAt, subscription, packs } = userPlan(env, user);
+  return { plan, expiresAt, subscription, packs, periodStart: monthStart(), periodEnd: nextMonthStart() };
 }
 
 async function accountState(env, store, user) {
   const ent = await entitlement(env, store, user);
   const used = await store.usedSince(user.email, ent.periodStart);
   const unlimited = !!ent.plan.unlimited;
-  const allowed = packsAllowed(ent.plan);
-  const balance = Math.round((await store.packBalance(user.email)) * 100) / 100;
+  const allowed = ent.packs.eligible;
+  const balance = Math.round((await store.packBalance(user.email, ent.packs.bought)) * 100) / 100;
   const planRemaining = unlimited ? null : Math.max(0, Math.round((ent.plan.credits - used) * 100) / 100);
   return {
     user: { email: user.email, name: user.name },
@@ -182,8 +165,8 @@ async function transcribe(request, env, store, user, url) {
   const seconds = wav.seconds;
   const credits = (seconds / 60) * (kind === 'strong' ? STRONG_WEIGHT : 1);
   const limit = ent.plan.credits;
-  const usePacks = packsAllowed(ent.plan);
-  const reservation = await store.reserve(user.email, ent.periodStart, limit, kind, seconds, credits, usePacks);
+  const usePacks = ent.packs.eligible;
+  const reservation = await store.reserve(user.email, ent.periodStart, limit, kind, seconds, credits, usePacks ? ent.packs.bought : 0);
   if (!reservation.ok) {
     reader.cancel().catch(() => {});
     const message = usePacks
@@ -234,58 +217,6 @@ async function email(request, env, store, user) {
   return json({ ok: true, to: user.email });
 }
 
-// ---------- extra-minute packs (one-time PayPal payments) ----------
-
-function packError() {
-  return json({ error: 'not_configured', message: 'רכישת חבילות עוד לא הופעלה' }, 503);
-}
-
-async function packOrder(request, env, store, user) {
-  if (!env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) return packError();
-  const { pack } = await readJson(request);
-  const p = PACKS[pack];
-  if (!p) return json({ error: 'bad_request', message: 'חבילה לא קיימת' }, 400);
-  const ent = await entitlement(env, store, user);
-  if (!packsAllowed(ent.plan)) {
-    return json({ error: 'upgrade', message: 'חבילות דקות זמינות למנויי התוכנית העסקית' }, 403);
-  }
-  const order = await createOrder(env, {
-    referenceId: 'pack-' + pack,
-    customId: `${clientId(env)}:${user.id}:${pack}`,
-    description: `תמלול: ${p.credits} דקות נוספות`,
-    value: p.price,
-    currency: PACK_CURRENCY,
-  });
-  return json({ id: order.id });
-}
-
-// After the buyer approves in PayPal: capture, check it's this user's paid order, add the minutes.
-// Safe to retry: an order is added once.
-async function packCapture(request, env, store, user) {
-  if (!env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) return packError();
-  const { orderId } = await readJson(request);
-  if (typeof orderId !== 'string' || !/^[A-Za-z0-9-]{5,64}$/.test(orderId)) {
-    return json({ error: 'bad_request', message: 'הזמנה לא תקינה' }, 400);
-  }
-  const order = await captureOrder(env, orderId);
-  const unit = order.purchase_units?.[0] || {};
-  const parts = String(unit.custom_id || '').split(':');
-  const site = parts.shift(), pack = parts.pop(), userId = parts.join(':');
-  const p = PACKS[pack];
-  if (site !== clientId(env) || userId !== String(user.id) || !p) {
-    return json({ error: 'forbidden', message: 'ההזמנה לא שייכת לחשבון הזה' }, 403);
-  }
-  const capture = unit.payments?.captures?.[0];
-  const paid = order.status === 'COMPLETED' && capture?.status === 'COMPLETED' &&
-    capture.amount?.currency_code === PACK_CURRENCY && Number(capture.amount?.value) >= p.price;
-  if (!paid) {
-    console.error('pack order not paid', orderId, order.status, capture?.status);
-    return json({ error: 'not_paid', message: 'התשלום לא הושלם' }, 402);
-  }
-  await store.addPack(user.email, orderId, pack, p.credits, Number(capture.amount.value), PACK_CURRENCY);
-  return json(await accountState(env, store, user));
-}
-
 // ---------- admin ----------
 //
 // What the reem.bi admin shows on this site's page (login.reembir.com/admin → אתרים → תמלול):
@@ -300,8 +231,6 @@ async function adminManifest(env, store) {
   const configured = {
     OPENAI_API_KEY: !!env.OPENAI_API_KEY,
     ADMIN_EMAILS: !!env.ADMIN_EMAILS,
-    PAYPAL_CLIENT_ID: !!env.PAYPAL_CLIENT_ID,
-    PAYPAL_CLIENT_SECRET: !!env.PAYPAL_CLIENT_SECRET,
   };
   return {
     version: 1,
@@ -311,8 +240,7 @@ async function adminManifest(env, store) {
       { label: 'דקות החודש (מהיר)', value: minutes('fast') },
       { label: 'דקות החודש (מדויק)', value: minutes('strong') },
       { label: 'עלות OpenAI החודש', value: '$' + Math.round(costUsd * 100) / 100 },
-      { label: 'חבילות דקות החודש', value: d.packs.n },
-      { label: 'הכנסה מחבילות החודש', value: '₪' + Math.round(d.packs.revenue * 100) / 100 },
+      { label: 'דקות מחבילות החודש', value: Math.round(d.packMinutes) },
     ],
     checks: [
       ...Object.entries(configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Worker timlul ← Variables and Secrets' })),

@@ -247,48 +247,35 @@ function renderPlans() {
   renderPacks(plans);
 }
 
-// ---------- extra-minute packs (one-time PayPal payment, top plan only) ----------
-
-let packPayPal = null;
-
-function loadPackPayPal() {
-  if (packPayPal) return packPayPal;
-  const pp = config.packs.paypal;
-  packPayPal = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://www.paypal.com/sdk/js?' + new URLSearchParams({
-      'client-id': pp.clientId, currency: config.packs.currency, intent: 'capture', components: 'buttons',
-    });
-    // Its own namespace, so it doesn't clash with reem.bi's subscription PayPal on the same page.
-    s.dataset.namespace = 'paypalPacks';
-    s.onload = () => resolve(window.paypalPacks);
-    s.onerror = () => { packPayPal = null; reject(new Error('PayPal לא נטען')); };
-    document.head.append(s);
-  });
-  return packPayPal;
-}
+// ---------- extra-minute packs (one-time payment, sold by reem.bi: dashboard → Packs) ----------
+// Each pack's JSON there says how many minutes it gives: {"minutes": 100}.
 
 function renderPacks(plans) {
   const box = $('packs');
-  const packs = config.packs;
-  if (!packs || !packs.list?.length) { box.hidden = true; return; }
-  const names = plans.filter(p => packs.plans.includes(p.key)).map(p => p.name);
-  const forText = 'חבילות למנויי ' + (names.length ? names.join(' / ') : 'התוכנית העסקית');
-  $('packsFor').textContent = forText;
+  const packs = (catalog.packs || []).filter(p => Number(p.features?.minutes) > 0);
+  if (!packs.length) { box.hidden = true; return; }
+  const myPlanId = me ? `${config.ssoClientId}:${me.plan.key}` : null;
+  const forIds = [...new Set(packs.flatMap(p => p.plan_ids || []))];
+  const forNames = plans.filter(p => forIds.includes(p.id)).map(p => p.name).join(' / ');
+  $('packsFor').textContent = forNames ? 'חבילות למנויי ' + forNames : 'חבילות דקות';
   const grid = $('packsGrid');
   grid.textContent = '';
-  for (const pack of packs.list) {
+  for (const pack of packs) {
+    const minutes = Number(pack.features.minutes);
     const card = el('div', 'plan', '');
-    card.append(el('h3', '', `${pack.credits.toLocaleString('he-IL')} דקות נוספות`));
-    const price = el('div', 'price', money(pack.price, packs.currency));
+    card.append(el('h3', '', pack.name || `${minutes.toLocaleString('he-IL')} דקות נוספות`));
+    const price = el('div', 'price', money(pack.price, pack.currency || catalog.currency));
     price.append(el('small', '', ' חד-פעמי'));
     card.append(price);
+    if (pack.description) card.append(el('div', 'muted small', pack.description));
     const ul = document.createElement('ul');
-    ul.append(el('li', '', `כ-${(pack.price / pack.credits * 100).toFixed(0)} אג׳ לדקה`));
+    ul.append(el('li', '', `${minutes.toLocaleString('he-IL')} דקות תמלול`));
+    ul.append(el('li', '', `כ-${(pack.price / minutes * 100).toFixed(0)} אג׳ לדקה`));
     ul.append(el('li', '', 'לא מתאפסות בסוף החודש'));
     card.append(ul);
     const slot = el('div', 'pp', '');
     card.append(slot);
+    const canBuy = me && (!pack.plan_ids?.length || pack.plan_ids.includes(myPlanId));
     if (!me) {
       const b = el('button', 'btn btn-ghost btn-block', 'התחברות');
       b.onclick = () => auth ? auth.login() : null;
@@ -296,26 +283,20 @@ function renderPacks(plans) {
     } else if (me.unlimited) {
       card.append(el('div', 'state', 'יש לך גישה ללא הגבלה'));
       slot.remove();
-    } else if (!me.packs?.allowed) {
-      slot.append(el('div', 'muted small center', `זמין למנויי ${names[0] || 'התוכנית העסקית'}. בתוכניות אחרות משתלם יותר לשדרג`));
-    } else if (!packs.paypal) {
+    } else if (!canBuy) {
+      slot.append(el('div', 'muted small center', `זמין למנויי ${forNames || 'תוכנית אחרת'}. בתוכניות אחרות משתלם יותר לשדרג`));
+    } else if (!catalog.paypal) {
       slot.append(el('div', 'muted small center', 'הרכישה תיפתח בקרוב'));
     } else {
-      loadPackPayPal().then(paypal => paypal.Buttons({
-        style: { layout: 'vertical', shape: 'rect', label: 'pay', height: 44, tagline: false },
-        createOrder: () => api('/api/packs/order', { method: 'POST', json: { pack: pack.key } }).then(d => d.id),
-        onApprove: async data => {
-          try {
-            me = await api('/api/packs/capture', { method: 'POST', json: { orderId: data.orderID } });
-            renderQuota();
-            toast(`נוספו ${pack.credits} דקות! תודה 🎉`);
-            $('workspace').scrollIntoView({ behavior: 'smooth' });
-          } catch (e) {
-            showPlanNote('התשלום לא הושלם: ' + e.message);
-          }
+      auth.billing.packButton(slot, pack.id, {
+        onSuccess: async () => {
+          await refreshMe(true);
+          toast(`נוספו ${minutes} דקות! תודה 🎉`);
+          $('workspace').scrollIntoView({ behavior: 'smooth' });
         },
-        onError: err => showPlanNote(err?.message ? 'התשלום לא הושלם: ' + err.message : 'התשלום לא הושלם. נסו שוב.'),
-      }).render(slot)).catch(e => slot.append(el('div', 'muted small center', e.message)));
+        onError: err => showPlanNote(err && err.message && err.message !== 'login'
+          ? 'התשלום לא הושלם: ' + err.message : 'התשלום לא הושלם. נסו שוב או בחרו אמצעי תשלום אחר.'),
+      }).catch(e => slot.append(el('div', 'muted small center', e.message)));
     }
     grid.append(card);
   }
