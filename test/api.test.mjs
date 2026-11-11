@@ -23,12 +23,13 @@ const PACK_PLANS = ['timlul:business'];
 
 function accessFor(email) {
   const a = dash[email] || {};
-  const planId = a.plan || 'timlul:free';
+  // plan: null = the site has no plan for new users (no free plan).
+  const planId = a.plan === null ? null : a.plan || 'timlul:free';
   return {
     status: 'active',
-    plan: { id: planId, name: PLANS[planId].name },
+    plan: planId ? { id: planId, name: PLANS[planId].name } : null,
     plan_expires_at: a.expires || null,
-    features: { ...PLANS[planId].features, ...(a.override || {}) },
+    features: { ...(planId ? PLANS[planId].features : {}), ...(a.override || {}) },
     subscription: a.subscription || null,
     packs: { eligible: PACK_PLANS.includes(planId), totals: a.packs ? { minutes: a.packs } : {}, count: a.packs ? 1 : 0 },
     rewards: { totals: a.bonus ? { minutes: a.bonus } : {}, count: a.bonus ? 1 : 0 },
@@ -108,7 +109,7 @@ const me = async (email, fresh) => (await mf.dispatchFetch(BASE + '/api/me' + (f
 test('config is public and assets fall through', async () => {
   const c = await (await mf.dispatchFetch(BASE + '/api/config')).json();
   assert.equal(c.ssoClientId, 'timlul');
-  assert.equal(c.planDefaults.free.credits, 10);
+  assert.equal(c.planDefaults.free.credits, 0, 'no free plan: only the welcome gift');
   assert.equal(await (await mf.dispatchFetch(BASE + '/')).text(), 'asset');
 });
 
@@ -294,6 +295,27 @@ test('partner program: gift minutes work on every plan, and a partner sees their
   assert.equal(m.affiliate.link, 'https://login.reembir.com/join/DANA');
 });
 
+test('no free plan: a new user has only the welcome gift, fast model, no email', async () => {
+  const user = 'newcomer@example.com';
+  dash[user] = { plan: null, bonus: 10 };
+  let m = await me(user);
+  assert.equal(m.plan.name, 'ללא מנוי');
+  assert.equal(m.plan.credits, 0);
+  assert.equal(m.remaining, 10);
+  assert.deepEqual(m.features, { strong: false, email: false });
+  assert.equal((await transcribe(user, 60, 'strong')).status, 403, 'fast model only');
+  assert.equal((await transcribe(user, 9 * 60)).status, 200);
+  m = await me(user);
+  assert.equal(m.remaining, 1);
+  const res = await transcribe(user, 2 * 60);
+  assert.equal(res.status, 402);
+  assert.match((await res.json()).message, /נגמרו דקות המתנה/);
+
+  dash['nogift@example.com'] = { plan: null };
+  assert.equal((await me('nogift@example.com')).remaining, 0);
+  assert.equal((await transcribe('nogift@example.com', 30)).status, 402);
+});
+
 test('out of minutes: business users are told about packs, others are not', async () => {
   dash['biz2@example.com'] = { plan: 'timlul:business' };
   let res = await transcribe('biz2@example.com', 4 * 60);
@@ -325,7 +347,7 @@ test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir
   const m = await res.json();
   assert.equal(m.version, 1);
   assert.ok(m.stats.find(s => s.label === 'עלות OpenAI החודש'));
-  assert.equal(m.stats.find(s => s.label === 'דקות נוספות החודש (חבילות ומתנות)').value, 5);
+  assert.equal(m.stats.find(s => s.label === 'דקות נוספות החודש (חבילות ומתנות)').value, 14);
   assert.ok(m.checks.find(c => c.label === 'OPENAI_API_KEY').ok);
   assert.equal(m.coupons, undefined, 'coupons are managed by reem.bi now');
   assert.ok(m.lists[0].items.some(i => i.title === 'vip@example.com'));

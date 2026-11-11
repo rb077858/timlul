@@ -51,7 +51,7 @@ export function userPlan(env, user) {
   const key = id.startsWith(prefix) ? id.slice(prefix.length) : 'free';
   const features = access.features && typeof access.features === 'object' ? access.features : {};
   const base = PLAN_DEFAULTS[key] || (key === 'free' ? PLAN_DEFAULTS.free : PAID_DEFAULT);
-  let plan = { key, name: access.plan?.name || 'חינם', ...base, ...pickFeatures(features) };
+  let plan = { key, name: access.plan?.name || 'ללא מנוי', ...base, ...pickFeatures(features) };
   if (isUnlimited(features)) plan = { ...plan, name: 'ללא הגבלה', credits: Infinity, strong: true, email: true, unlimited: true };
   // Extra-minute packs, sold by reem.bi (dashboard → Packs, {"minutes": 100}): the minutes bought
   // in total, and whether the user's plan is one the packs are for (otherwise they're frozen).

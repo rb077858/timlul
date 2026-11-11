@@ -45,10 +45,13 @@ async function init() {
 function renderStaticConfig() {
   document.querySelectorAll('.strong-weight').forEach(el => { el.textContent = config.strongWeight; });
   $('strongNote').textContent = `המודל החזק ביותר. דקה = ${config.strongWeight} דקות מהמכסה`;
+  // No free plan: new users get a one-time gift (reem.bi dashboard → Plans → welcome gift).
+  const gift = Number(catalog?.welcome?.minutes) || 0;
   const free = catalog && catalog.free && planInfo(catalog.free);
-  if (free) {
-    $('heroCta').querySelector('.small').textContent = `${free.credits} דקות חינם בכל חודש, בלי כרטיס אשראי`;
-  }
+  const cta = $('heroCta').querySelector('.small');
+  if (free && free.credits > 0) cta.textContent = `${free.credits} דקות חינם בכל חודש, בלי כרטיס אשראי`;
+  else if (gift > 0) cta.textContent = `${gift} דקות מתנה להתחלה, בלי כרטיס אשראי`;
+  else cta.textContent = 'בלי כרטיס אשראי עד שבוחרים תוכנית';
 }
 
 async function onUser(user) {
@@ -120,21 +123,26 @@ function renderQuota() {
   if (!me) return;
   $('planName').textContent = me.plan.name;
   $('remaining').textContent = me.unlimited ? '∞' : fmtMinutes(me.remaining);
-  const pct = me.unlimited ? 0 : me.plan.credits ? Math.min(100, (me.used / me.plan.credits) * 100) : 100;
+  const noPlan = !me.unlimited && !me.plan.credits;
+  const extraAll = me.packs?.balance || 0;
+  // Without a plan the bar shows the welcome gift / extra minutes instead of a monthly quota.
+  const pct = me.unlimited ? 0 : me.plan.credits ? Math.min(100, (me.used / me.plan.credits) * 100)
+    : (me.packs?.bonus || 0) > 0 ? Math.min(100, Math.max(0, (1 - (me.packs?.usable || 0) / me.packs.bonus) * 100)) : 100;
   $('quotaBar').style.width = pct + '%';
 
   const sub = me.subscription;
   const active = sub && sub.status === 'ACTIVE';
   let detail = me.unlimited
     ? `נוצלו ${fmtMinutes(me.used)} דקות. ללא הגבלה. `
+    : noPlan ? (me.remaining > 0 ? 'דקות מתנה להתחלה, במודל המהיר. ' : 'נגמרו דקות המתנה. כדי להמשיך לתמלל, בחרו תוכנית. ')
     : `נוצלו ${fmtMinutes(me.used)} מתוך ${me.plan.credits} דקות. `;
   if (active) detail += `המנוי מתחדש ב-${fmtDate(sub.paid_until * 1000 - 86400000)}. `;
   else if (sub && sub.status === 'CANCELLED') detail += `המנוי בוטל ופעיל עד ${fmtDate(sub.paid_until * 1000)}. `;
   else if (me.planExpiresAt) detail += `התוכנית בתוקף עד ${fmtDate(me.planExpiresAt)}. `;
-  if (!me.unlimited) detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}. `;
-  const extra = me.packs?.balance || 0;
+  if (!me.unlimited && !noPlan) detail += `המכסה מתחדשת ב-${fmtDate(me.periodEnd)}. `;
+  const extra = extraAll;
   const usable = me.packs?.usable ?? (me.packs?.allowed ? extra : 0);
-  if (extra > 0 && !me.unlimited) {
+  if (extra > 0 && !me.unlimited && !noPlan) {
     if (usable >= extra - 0.01) detail += `כולל ${fmtMinutes(extra)} דקות נוספות, שנכנסות לפעולה אחרי המכסה החודשית.`;
     else if (usable > 0) detail += `כולל ${fmtMinutes(usable)} דקות נוספות. עוד ${fmtMinutes(extra - usable)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
     else detail += `${fmtMinutes(extra)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
@@ -145,11 +153,15 @@ function renderQuota() {
   applyFeatures();
 }
 
+// The partner program is off on this site for now: set to true to show the join card and a
+// partner's link again (the program itself is managed in reem.bi: dashboard → Partners).
+const PARTNERS = false;
+
 // A partner (reem.bi dashboard → Partners) sees their link and code, and who joined through it.
 function renderPartner() {
   renderPartnerJoin();
   const box = $('partnerBox');
-  const a = me?.affiliate;
+  const a = PARTNERS ? me?.affiliate : null;
   box.hidden = !a || !a.active;
   if (box.hidden) return;
   $('partnerLink').value = a.link;
@@ -165,7 +177,7 @@ function renderPartner() {
 // Not a partner yet, and the program is open to everyone: a card to join (a random code is made).
 function renderPartnerJoin() {
   const box = $('partnerJoin');
-  const p = me?.partnerProgram;
+  const p = PARTNERS ? me?.partnerProgram : null;
   box.hidden = !p || !!me.affiliate;
   if (box.hidden) return;
   const parts = [];

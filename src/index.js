@@ -186,7 +186,7 @@ async function transcribe(request, env, store, user, url) {
     reader.cancel().catch(() => {});
     const message = usePacks
       ? 'נגמרו הדקות לחודש הזה. אפשר לקנות חבילת דקות נוספות בדף המחירים'
-      : 'נגמרו הדקות בתוכנית שלך לחודש הזה';
+      : limit > 0 ? 'נגמרו הדקות בתוכנית שלך לחודש הזה' : 'נגמרו דקות המתנה. כדי להמשיך לתמלל, בחרו תוכנית';
     return json({ error: 'quota', message, used: reservation.used, limit, packs: reservation.packs }, 402);
   }
 

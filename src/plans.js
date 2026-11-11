@@ -5,8 +5,10 @@
 // Usage is counted in "credits": one minute of audio with the fast model
 // costs 1 credit, with the accurate model STRONG_WEIGHT credits.
 
+// No free plan: without a subscription there are no monthly minutes, only the one-time welcome gift
+// from reem.bi (dashboard → Plans → welcome gift, {"minutes": 10}), with the fast model and no email.
 export const PLAN_DEFAULTS = {
-  free:     { credits: 10,   strong: false, email: false },
+  free:     { credits: 0,    strong: false, email: false },
   basic:    { credits: 180,  strong: true,  email: true },
   pro:      { credits: 600,  strong: true,  email: true },
   business: { credits: 1500, strong: true,  email: true },
