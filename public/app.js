@@ -74,6 +74,7 @@ async function onUser(user) {
   }
   $('accountLink').textContent = user.name || user.email;
   $('accountLink').href = auth.accountUrl();
+  chatIdentify(user);
   await refreshMe();
   renderHistory();
   applyPendingCoupon();
@@ -675,6 +676,26 @@ function clearCoupon() {
   $('couponInput').value = '';
   couponMessage('');
 }
+
+// ---------- support chat (chat.reembir.com, loaded by index.html) ----------
+// The signed-in user's reem.bi token lets the chat show agents a verified account, so they can help
+// with it (gifts, packs, upgrades) without asking who it is.
+
+function chatCall(name, ...args) {
+  if (window.ReemChat && window.ReemChat.__loaded) return window.ReemChat[name](...args);
+  window.ReemChat = window.ReemChat || {};
+  (window.ReemChat.q = window.ReemChat.q || []).push([name, ...args]);
+}
+
+async function chatIdentify(user) {
+  try {
+    chatCall('identify', { name: user.name || '', email: user.email || '', token: await auth.getToken() });
+  } catch { /* the chat is optional */ }
+}
+
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-chat-open]')) { e.preventDefault(); chatCall('open'); }
+});
 
 // ---------- local history ----------
 

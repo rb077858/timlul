@@ -234,6 +234,12 @@ textarea { resize: vertical; line-height: 1.7; }
 .faq p { margin: 8px 0 0; color: var(--muted); }
 
 .footer { padding: 24px 0 40px; text-align: center; }
+.footer-inner { display: grid; gap: 10px; }
+.footer .contact { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; }
+.footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.footer .link-btn, .faq .link-btn { color: var(--primary); text-decoration: underline; }
+.footer .link-btn:hover, .faq .link-btn:hover { color: var(--primary-hover); }
+.ltr-inline { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 
 .toast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 20;

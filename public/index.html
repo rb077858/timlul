@@ -245,17 +245,27 @@
       <details><summary>מה ההבדל בין "מהיר" ל"מדויק"?</summary><p>שניהם מודלי תמלול של OpenAI. המדויק מתמודד טוב יותר עם רעשי רקע, מבטאים ומונחים מקצועיים. הוא זמין בתוכניות בתשלום, וכל דקה בו נספרת כפול.</p></details>
       <details><summary>האם הקבצים שלי נשמרים?</summary><p>לא. השמע נשלח לתמלול ונמחק, והטקסט לא נשמר בשרת שלנו. רק בדפדפן שלכם נשמרים התמלולים האחרונים, ואפשר למחוק אותם.</p></details>
       <details><summary>נגמרו לי הדקות בתוכנית העסקית. מה עושים?</summary><p>מנויי התוכנית העסקית יכולים לקנות חבילת דקות נוספות בתשלום חד-פעמי, בתחתית דף המחירים. הדקות מהחבילה נכנסות לפעולה רק אחרי שהמכסה החודשית נגמרת, ולא מתאפסות בסוף החודש. הן זמינות כל עוד המנוי העסקי פעיל. בתוכניות האחרות משתלם יותר לשדרג.</p></details>
+      <details><summary>איך יוצרים איתנו קשר?</summary><p>הכי מהר: בצ׳אט, בכפתור שבפינת המסך (<button type="button" class="link-btn" data-chat-open>פתיחת הצ׳אט</button>). בעיה בחשבון, בתשלום או במנוי: <span class="ltr-inline">support@reembir.com</span>. שאלות כלליות, גם בלי חשבון: <span class="ltr-inline">contact@reembir.com</span>.</p></details>
       <details><summary>איך מבטלים מנוי?</summary><p>בכרטיס "התוכנית שלך" לוחצים "ביטול מנוי". התוכנית ממשיכה לעבוד עד סוף החודש ששולם.</p></details>
     </section>
   </main>
 
   <footer class="footer">
-    <div class="wrap muted small">© תמלול · התמלול נעשה באמצעות OpenAI · התשלום דרך PayPal</div>
+    <div class="wrap muted small footer-inner">
+      <div class="contact">
+        <span>צריכים עזרה? <button type="button" class="link-btn" data-chat-open>צ׳אט עם נציג</button></span>
+        <span>בעיה בחשבון: <a href="mailto:support@reembir.com" class="ltr-inline">support@reembir.com</a></span>
+        <span>שאלות כלליות: <a href="mailto:contact@reembir.com" class="ltr-inline">contact@reembir.com</a></span>
+      </div>
+      <div>© תמלול · התמלול נעשה באמצעות OpenAI · התשלום דרך PayPal</div>
+    </div>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="https://login.reembir.com/sdk.js"></script>
+  <!-- Support chat (chat.reembir.com): data-site tells the agents which site the customer is on. -->
+  <script src="https://chat.reembir.com/widget.js" data-site="timlul" async></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
