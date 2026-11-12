@@ -2,6 +2,7 @@ import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, modelIds } from './plans
 import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
 import { sendTranscriptEmail } from './mail.js';
 import { authenticate, userPlan, clientId } from './sso.js';
+import { adminManifest, adminAction } from './admin.js';
 
 export { Store } from './store.js';
 
@@ -56,7 +57,12 @@ async function route(request, env, url) {
 
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
-    if (path === '/api/admin/manifest' && method === 'GET') return json(await adminManifest(env, store, url));
+    if (path === '/api/admin/manifest' && method === 'GET') return json(await adminManifest(env, store));
+    const act = path.match(/^\/api\/admin\/actions\/([a-z0-9-]+)$/);
+    if (act && method === 'POST') {
+      const r = await adminAction(env, store, act[1], await request.json().catch(() => ({})));
+      return json(r.data, r.status);
+    }
   }
   return json({ error: 'not_found' }, 404);
 }
@@ -237,37 +243,3 @@ async function email(request, env, store, user) {
 // What the reem.bi admin shows on this site's page (login.reembir.com/admin → אתרים → תמלול):
 // usage and cost stats and the state of the settings. Plans, coupons and subscriptions are
 // managed there directly, so they're not here.
-async function adminManifest(env, store) {
-  const d = await store.stats(monthStart());
-  let costUsd = 0;
-  for (const row of d.usage) costUsd += (row.seconds / 60) * (COST_PER_MINUTE[row.model] || 0);
-  const minutes = model => Math.round((d.usage.find(u => u.model === model)?.seconds || 0) / 60);
-  const ids = modelIds(env);
-  const configured = {
-    OPENAI_API_KEY: !!env.OPENAI_API_KEY,
-    ADMIN_EMAILS: !!env.ADMIN_EMAILS,
-  };
-  return {
-    version: 1,
-    name: 'תמלול',
-    stats: [
-      { label: 'השתמשו החודש', value: d.activeUsers },
-      { label: 'דקות החודש (מהיר)', value: minutes('fast') },
-      { label: 'דקות החודש (מדויק)', value: minutes('strong') },
-      { label: 'עלות OpenAI החודש', value: '$' + Math.round(costUsd * 100) / 100 },
-      { label: 'דקות נוספות החודש (חבילות ומתנות)', value: Math.round(d.packMinutes) },
-    ],
-    checks: [
-      ...Object.entries(configured).map(([k, ok]) => ({ label: k, ok, detail: ok ? 'מוגדר' : 'חסר ב-Cloudflare ← Worker timlul ← Variables and Secrets' })),
-      { label: 'מודלים', ok: true, detail: `מהיר: ${ids.fast} · מדויק: ${ids.strong}` },
-    ],
-    lists: [{
-      title: 'הכי הרבה שימוש החודש',
-      empty: 'עוד אין שימוש החודש',
-      items: d.topUsers.map(u => ({
-        title: u.email,
-        subtitle: `${Math.round(u.seconds / 60)} דקות הקלטה · ${Math.round(u.credits)} דקות מהמכסה`,
-      })),
-    }],
-  };
-}

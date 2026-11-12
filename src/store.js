@@ -17,6 +17,9 @@ export class Store extends DurableObject {
       );
       CREATE INDEX IF NOT EXISTS usage_email_ts ON usage(email, ts);
       CREATE TABLE IF NOT EXISTS emails (email TEXT, ts INTEGER);
+      CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, usd REAL, ts INTEGER);
+      CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, ts INTEGER);
+      CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
     `);
     // usage.pack_credits: the part of a row paid from packs instead of the monthly quota.
     const cols = this.sql.exec('PRAGMA table_info(usage)').toArray().map(c => c.name);
@@ -75,6 +78,56 @@ export class Store extends DurableObject {
     if (n >= max) return false;
     this.sql.exec('INSERT INTO emails (email, ts) VALUES (?, ?)', email, Date.now());
     return true;
+  }
+
+  // ---------- for the reem.bi dashboard (admin.js) ----------
+
+  // Minutes of audio per model since `from` (and before `to`), e.g. { fast: 12.5, strong: 3 }.
+  minutesByModel(from, to = 8.64e15) {
+    const out = { fast: 0, strong: 0 };
+    for (const r of this.sql.exec('SELECT model, SUM(seconds) AS s FROM usage WHERE ts >= ? AND ts < ? GROUP BY model', from, to).toArray()) {
+      if (r.model in out) out[r.model] = (r.s || 0) / 60;
+    }
+    return out;
+  }
+
+  adminData({ month, from30, day, readingTs, readingDayEnd }) {
+    return {
+      users: this.one('SELECT COUNT(*) AS n FROM users').n,
+      newUsers: this.one('SELECT COUNT(*) AS n FROM users WHERE first_seen >= ?', month).n,
+      activeUsers: this.one('SELECT COUNT(DISTINCT email) AS n FROM usage WHERE ts >= ?', month).n,
+      monthChunks: this.one('SELECT COUNT(*) AS n FROM usage WHERE ts >= ?', month).n,
+      monthMinutes: this.minutesByModel(month),
+      packMinutes: this.one('SELECT COALESCE(SUM(pack_credits), 0) AS n FROM usage WHERE ts >= ?', month).n,
+      emails24: this.one('SELECT COUNT(*) AS n FROM emails WHERE ts >= ?', day).n,
+      daily: this.sql.exec(
+        `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch') AS day, model, SUM(seconds) AS seconds
+         FROM usage WHERE ts >= ? GROUP BY day, model`, from30 - 86400000).toArray(),
+      topUsers: this.sql.exec(
+        `SELECT email, SUM(seconds) AS seconds, SUM(credits) AS credits FROM usage WHERE ts >= ?
+         GROUP BY email ORDER BY credits DESC LIMIT 10`, month).toArray(),
+      sinceReading: readingTs ? this.minutesByModel(readingTs) : null,
+      readingDayRest: readingTs ? this.minutesByModel(readingTs, readingDayEnd) : null,
+    };
+  }
+
+  // The OpenAI balance as the admin typed it ('balance') and top-ups after it ('topup'), newest first.
+  ledger() {
+    return this.sql.exec('SELECT kind, usd, ts FROM ledger ORDER BY ts DESC, id DESC LIMIT 50').toArray();
+  }
+  addLedger(kind, usd) {
+    this.sql.exec('INSERT INTO ledger (kind, usd, ts) VALUES (?, ?, ?)', kind, usd, Date.now());
+  }
+  hasBalance() {
+    return !!this.one("SELECT 1 AS x FROM ledger WHERE kind = 'balance'");
+  }
+
+  cacheGet(k, maxAgeMs) {
+    const r = this.one('SELECT v, ts FROM cache WHERE k = ?', k);
+    return r && Date.now() - r.ts < maxAgeMs ? JSON.parse(r.v) : null;
+  }
+  cachePut(k, v) {
+    this.sql.exec('INSERT INTO cache (k, v, ts) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, ts = excluded.ts', k, JSON.stringify(v), Date.now());
   }
 
   stats(monthStart) {

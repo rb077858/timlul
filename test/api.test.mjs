@@ -48,6 +48,12 @@ async function mock(req) {
     const email = m[1].toLowerCase();
     return Response.json({ user: { id: 'u-' + email, email: email.toUpperCase(), name: 'Test' }, access: accessFor(email) });
   }
+  if (url.host === 'api.openai.com' && url.pathname === '/v1/organization/costs') {
+    // The Costs API (admin key): $1.40 today.
+    if (auth !== 'Bearer sk-admin') return Response.json({ error: { message: 'bad key' } }, { status: 401 });
+    const today = Math.floor(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) / 1000);
+    return Response.json({ data: [{ start_time: today, end_time: today + 86400, results: [{ amount: { value: 1.4, currency: 'usd' } }] }], has_more: false });
+  }
   if (url.host === 'api.openai.com') {
     const body = new Uint8Array(await req.arrayBuffer());
     calls.at(-1).body = body;
@@ -72,7 +78,7 @@ before(async () => {
     compatibilityDate: '2025-09-01',
     durableObjects: { STORE: { className: 'Store', useSQLite: true } },
     bindings: {
-      OPENAI_API_KEY: 'sk-test', ADMIN_EMAILS: 'boss@example.com',
+      OPENAI_API_KEY: 'sk-test', ADMIN_EMAILS: 'boss@example.com', OPENAI_ADMIN_KEY: 'sk-admin',
     },
     serviceBindings: { ASSETS: () => new Response('asset') },
     outboundService: mock,
@@ -345,12 +351,36 @@ test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('access-control-allow-origin'), SSO);
   const m = await res.json();
-  assert.equal(m.version, 1);
-  assert.ok(m.stats.find(s => s.label === 'עלות OpenAI החודש'));
-  assert.equal(m.stats.find(s => s.label === 'דקות נוספות החודש (חבילות ומתנות)').value, 14);
+  assert.equal(m.version, 2);
+  assert.equal(m.stats.find(s => s.label === 'עלות OpenAI החודש').value, '$1.40', 'from the Costs API');
+  const items = m.sections.flatMap(x => x.items);
+  assert.equal(items.find(i => i.label === 'דקות מחבילות ומתנות').value, 14);
+  assert.equal(items.find(i => i.type === 'note').tone, 'warn', 'balance unknown yet');
+  assert.equal(items.find(i => i.type === 'chart').labels.length, 30);
+  assert.deepEqual(m.finance, { cost_month_usd: 1.4, cost_30d_usd: 1.4, source: 'openai', usd_ils: 3.2 });
   assert.ok(m.checks.find(c => c.label === 'OPENAI_API_KEY').ok);
+  assert.ok(m.checks.find(c => c.label === 'OPENAI_ADMIN_KEY').ok);
   assert.equal(m.coupons, undefined, 'coupons are managed by reem.bi now');
   assert.ok(m.lists[0].items.some(i => i.title === 'vip@example.com'));
+
+  // The balance: typed in, then a top-up; what's left and how long it lasts.
+  const action = (id, body, who = admin) => mf.dispatchFetch(BASE + '/api/admin/actions/' + id, {
+    method: 'POST', headers: { ...as(who), Origin: SSO, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  assert.equal((await action('openai-topup', { usd: 5 })).status, 400, 'balance first');
+  assert.equal((await action('openai-balance', { usd: 'x' })).status, 400);
+  assert.equal((await action('openai-balance', { usd: 10 }, 'a@example.com')).status, 403);
+  assert.equal((await action('openai-balance', { usd: 10 })).status, 200);
+  const top = await action('openai-topup', { usd: 5 });
+  assert.equal(top.headers.get('access-control-allow-origin'), SSO);
+  assert.match((await top.json()).message, /\$5\.00/);
+  const m2 = await (await mf.dispatchFetch(BASE + '/api/admin/manifest', { headers: { ...as(admin), Origin: SSO } })).json();
+  const meter = m2.sections[0].items.find(i => i.type === 'meter');
+  assert.equal(meter.max, 15);
+  assert.equal(meter.display, '$15.00', 'nothing spent since the reading');
+  assert.match(meter.sub, /150 ימים/, '$15 at $0.10 a day (1.40 over 14 days)');
+  assert.equal(m2.stats.find(s => s.label === 'יתרה ב-OpenAI').value, '$15.00');
+  assert.equal(m2.lists[1].items.length, 2);
 
   const evil = await mf.dispatchFetch(BASE + '/api/admin/manifest', { headers: { ...as(admin), Origin: 'https://evil.example' } });
   assert.equal(evil.headers.get('access-control-allow-origin'), null);
