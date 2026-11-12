@@ -60,6 +60,10 @@ async function onUser(user) {
   $('loginBtn').hidden = !!user;
   $('userMenu').hidden = !user;
   $('heroCta').hidden = !!user;
+  // Signed in: the workspace replaces the pitch (product picture and "how it works").
+  $('heroShot').hidden = !!user;
+  $('how').hidden = !!user;
+  $('hero').classList.toggle('signed-in', !!user);
   $('workspace').hidden = !user;
 
   if (!user) {
@@ -269,7 +273,6 @@ function renderPlans() {
     ul.append(el('li', '', `${plan.credits.toLocaleString('he-IL')} דקות תמלול בחודש${hours}`));
     ul.append(el('li', '', plan.strong ? 'מודל מהיר ומודל מדויק' : 'מודל מהיר בלבד'));
     ul.append(el('li', '', plan.email ? 'הורדה כ-TXT ושליחה למייל' : 'הורדה כ-TXT'));
-    if (plan.price && plan.credits) ul.append(el('li', '', `כ-${(plan.price / plan.credits * 100).toFixed(0)} אג׳ לדקה`));
     card.append(ul);
 
     if (me?.unlimited) {
@@ -312,7 +315,8 @@ function renderPlans() {
 function renderPacks(plans) {
   const box = $('packs');
   const packs = (catalog.packs || []).filter(p => Number(p.features?.minutes) > 0);
-  if (!packs.length) { box.hidden = true; return; }
+  // Packs show only to someone whose plan can buy them; everyone else sees just the plans.
+  if (!packs.length || !me || !me.packs?.allowed) { box.hidden = true; return; }
   const myPlanId = me ? `${config.ssoClientId}:${me.plan.key}` : null;
   const forIds = [...new Set(packs.flatMap(p => p.plan_ids || []))];
   const forNames = plans.filter(p => forIds.includes(p.id)).map(p => p.name).join(' / ');
@@ -579,7 +583,10 @@ async function cancelSubscription() {
 
 function bindCoupon() {
   const fromUrl = new URLSearchParams(location.search).get('coupon');
+  // The coupon field stays folded until someone has a code.
+  $('couponToggle').onclick = () => { $('couponRow').hidden = false; $('couponToggle').hidden = true; $('couponInput').focus(); };
   if (fromUrl) {
+    $('couponRow').hidden = false; $('couponToggle').hidden = true;
     $('couponInput').value = fromUrl;
     try { sessionStorage.setItem(PENDING_COUPON, fromUrl); } catch { /* ignore */ }
   }
@@ -591,6 +598,7 @@ function applyPendingCoupon() {
   let code = null;
   try { code = sessionStorage.getItem(PENDING_COUPON); sessionStorage.removeItem(PENDING_COUPON); } catch { /* ignore */ }
   if (code) {
+    $('couponRow').hidden = false; $('couponToggle').hidden = true;
     $('couponInput').value = code;
     applyCoupon(code);
   }

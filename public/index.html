@@ -36,14 +36,28 @@
   </header>
 
   <main class="wrap">
-    <section class="hero">
-      <h1>תמלול אודיו ווידאו, <span class="accent">בכמה דקות</span></h1>
-      <p class="lead">מעלים הקלטה, שיחה, הרצאה או סרטון. מקבלים טקסט מוכן להורדה כקובץ TXT או ישירות למייל. עובד בעברית ובעוד עשרות שפות.</p>
-      <div id="heroCta" class="hero-cta" hidden>
-        <button id="heroLogin" class="btn btn-primary btn-lg">התחברות והתחלה בחינם</button>
-        <span class="muted small">10 דקות מתנה להתחלה, בלי כרטיס אשראי</span>
+    <section class="hero" id="hero">
+      <div class="hero-text">
+        <h1>תמלול אודיו ווידאו, <span class="accent">בכמה דקות</span></h1>
+        <p class="lead">מעלים הקלטה, שיחה, הרצאה או סרטון. מקבלים טקסט מוכן להורדה כקובץ TXT או ישירות למייל. עובד בעברית ובעוד עשרות שפות.</p>
+        <div id="heroCta" class="hero-cta" hidden>
+          <button id="heroLogin" class="btn btn-primary btn-lg">התחברות והתחלה בחינם</button>
+          <span class="muted small">10 דקות מתנה להתחלה, בלי כרטיס אשראי</span>
+        </div>
+        <p id="sdkError" class="notice notice-error" hidden>מערכת ההתחברות לא זמינה כרגע. נסו לרענן את הדף בעוד כמה דקות.</p>
       </div>
-      <p id="sdkError" class="notice notice-error" hidden>מערכת ההתחברות לא זמינה כרגע. נסו לרענן את הדף בעוד כמה דקות.</p>
+      <figure class="hero-shot" id="heroShot">
+        <picture>
+          <source srcset="img/product-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="img/product-light.png" width="524" height="501" alt="תמלול של ראיון בעברית, עם כפתורים להורדה כקובץ TXT, שליחה במייל והעתקה">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="how" id="how">
+      <div class="step"><span class="step-n">1</span><b>מעלים קובץ</b><span class="muted">הקלטה מהטלפון, זום, הרצאה או סרטון. גם קבצים ארוכים.</span></div>
+      <div class="step"><span class="step-n">2</span><b>בוחרים שפה</b><span class="muted">עברית, אנגלית, ערבית ועוד. אפשר להוסיף שמות ומונחים שחשוב שייכתבו נכון.</span></div>
+      <div class="step"><span class="step-n">3</span><b>מקבלים טקסט</b><span class="muted">להורדה, להעתקה או ישר למייל. הקבצים לא נשמרים אצלנו.</span></div>
     </section>
 
     <section id="workspace" hidden>
@@ -157,10 +171,11 @@
     </section>
 
     <section id="plans" class="plans-section">
-      <h2 class="section-title">תוכניות ומחירים</h2>
-      <p class="muted center">מנוי חודשי, אפשר לבטל בכל רגע. התשלום מאובטח דרך PayPal (גם בכרטיס אשראי, בלי חשבון PayPal).</p>
-      <div class="coupon">
-        <input id="couponInput" type="text" placeholder="יש לך קוד קופון?" dir="ltr" autocomplete="off" aria-label="קוד קופון">
+      <h2 class="section-title">כשצריך יותר דקות</h2>
+      <p class="muted center">מנוי חודשי שמבטלים בכל רגע.</p>
+      <p class="center"><button id="couponToggle" class="link-btn" type="button">יש לי קוד קופון</button></p>
+      <div class="coupon" id="couponRow" hidden>
+        <input id="couponInput" type="text" placeholder="קוד קופון" dir="ltr" autocomplete="off" aria-label="קוד קופון">
         <button id="couponBtn" class="btn btn-ghost">החלה</button>
       </div>
       <p id="couponMsg" class="notice center" hidden></p>
@@ -170,13 +185,13 @@
         <p class="muted center small">תשלום חד-פעמי, בלי מנוי. הדקות נכנסות לפעולה רק אחרי שהמכסה החודשית נגמרת, לא מתאפסות בסוף החודש, ונשארות זמינות כל עוד המנוי פעיל.</p>
         <div id="packsGrid" class="plans"></div>
       </div>
-      <p class="muted small center">המכסה מתחדשת בכל חודש. דקות שלא נוצלו לא עוברות לחודש הבא. המודל המדויק ושליחה במייל זמינים בתוכניות בתשלום, ובמודל המדויק כל דקת הקלטה נספרת כ-<span class="strong-weight">2</span> דקות.</p>
       <p id="planNote" class="notice center" hidden></p>
     </section>
 
     <section class="faq">
       <h2 class="section-title">שאלות נפוצות</h2>
       <details><summary>אילו קבצים אפשר להעלות?</summary><p>כמעט כל קובץ אודיו או וידאו: MP3, M4A, WAV, OGG, MP4, MOV, WEBM ועוד. הקובץ מעובד בדפדפן, ורק השמע (בלי התמונה) נשלח לתמלול. לסרטונים ארוכים מאוד (מעל שעה) בטלפון, עדיף להעלות קובץ אודיו.</p></details>
+      <details><summary>איך נספרות הדקות?</summary><p>לפי אורך ההקלטה. המכסה מתחדשת בכל חודש, ודקות שלא נוצלו לא עוברות לחודש הבא. במודל המדויק כל דקת הקלטה נספרת כ-<span class="strong-weight">2</span> דקות. התשלום מאובטח דרך PayPal, גם בכרטיס אשראי בלי חשבון PayPal.</p></details>
       <details><summary>מה ההבדל בין "מהיר" ל"מדויק"?</summary><p>שניהם מודלי תמלול של OpenAI. המדויק מתמודד טוב יותר עם רעשי רקע, מבטאים ומונחים מקצועיים. הוא זמין בתוכניות בתשלום, וכל דקה בו נספרת כפול.</p></details>
       <details><summary>האם הקבצים שלי נשמרים?</summary><p>לא. השמע נשלח לתמלול ונמחק, והטקסט לא נשמר בשרת שלנו. רק בדפדפן שלכם נשמרים התמלולים האחרונים, ואפשר למחוק אותם.</p></details>
       <details><summary>נגמרו לי הדקות בתוכנית העסקית. מה עושים?</summary><p>מנויי התוכנית העסקית יכולים לקנות חבילת דקות נוספות בתשלום חד-פעמי, בתחתית דף המחירים. הדקות מהחבילה נכנסות לפעולה רק אחרי שהמכסה החודשית נגמרת, ולא מתאפסות בסוף החודש. הן זמינות כל עוד המנוי העסקי פעיל. בתוכניות האחרות משתלם יותר לשדרג.</p></details>
