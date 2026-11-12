@@ -19,6 +19,7 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS emails (email TEXT, ts INTEGER);
       CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, usd REAL, ts INTEGER);
       CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, ts INTEGER);
+      CREATE TABLE IF NOT EXISTS summary_files (id TEXT PRIMARY KEY, email TEXT, type TEXT, ts INTEGER);
       CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
     `);
     // usage.pack_credits: the part of a row paid from packs instead of the monthly quota.
@@ -80,13 +81,46 @@ export class Store extends DurableObject {
     return true;
   }
 
+  // ---------- AI summaries (summary.js) ----------
+
+  // A reservation made with the worst case is set to what the summary really cost: what's given
+  // back comes out of the pack part first (reserve() takes the plan's quota first).
+  settle(id, credits) {
+    const r = this.one('SELECT credits, pack_credits FROM usage WHERE id = ?', id);
+    if (!r) return;
+    const fromPlan = Math.min(r.credits - r.pack_credits, credits);
+    this.sql.exec('UPDATE usage SET credits = ?, pack_credits = ? WHERE id = ?', credits, Math.max(0, credits - fromPlan), id);
+  }
+  hasSummarized(email) {
+    return !!this.one("SELECT 1 AS x FROM usage WHERE email = ? AND model = 'summary'", email);
+  }
+  addSummaryFile(email, id, type) {
+    this.sql.exec('INSERT OR REPLACE INTO summary_files (id, email, type, ts) VALUES (?, ?, ?, ?)', id, email, type, Date.now());
+  }
+  ownsSummaryFiles(email, ids) {
+    return ids.every(id => !!this.one('SELECT 1 AS x FROM summary_files WHERE id = ? AND email = ?', id, email));
+  }
+  summaryFileTypes(ids) {
+    return Object.fromEntries(ids.map(id => [id, this.one('SELECT type FROM summary_files WHERE id = ?', id)?.type || 'pdf']));
+  }
+  dropSummaryFiles(ids) {
+    for (const id of ids) this.sql.exec('DELETE FROM summary_files WHERE id = ?', id);
+  }
+  staleSummaryFiles(before) {
+    const ids = this.sql.exec('SELECT id FROM summary_files WHERE ts < ?', before).toArray().map(r => r.id);
+    this.dropSummaryFiles(ids);
+    return ids;
+  }
+
   // ---------- for the reem.bi dashboard (admin.js) ----------
 
   // Minutes of audio per model since `from` (and before `to`), e.g. { fast: 12.5, strong: 3 }.
   minutesByModel(from, to = 8.64e15) {
-    const out = { fast: 0, strong: 0 };
-    for (const r of this.sql.exec('SELECT model, SUM(seconds) AS s FROM usage WHERE ts >= ? AND ts < ? GROUP BY model', from, to).toArray()) {
-      if (r.model in out) out[r.model] = (r.s || 0) / 60;
+    // summary: AI summaries, in credits ($0.003 each) rather than minutes of audio.
+    const out = { fast: 0, strong: 0, summary: 0 };
+    for (const r of this.sql.exec('SELECT model, SUM(seconds) AS s, SUM(credits) AS c FROM usage WHERE ts >= ? AND ts < ? GROUP BY model', from, to).toArray()) {
+      if (r.model === 'summary') out.summary = r.c || 0;
+      else if (r.model in out) out[r.model] = (r.s || 0) / 60;
     }
     return out;
   }
@@ -96,12 +130,13 @@ export class Store extends DurableObject {
       users: this.one('SELECT COUNT(*) AS n FROM users').n,
       newUsers: this.one('SELECT COUNT(*) AS n FROM users WHERE first_seen >= ?', month).n,
       activeUsers: this.one('SELECT COUNT(DISTINCT email) AS n FROM usage WHERE ts >= ?', month).n,
-      monthChunks: this.one('SELECT COUNT(*) AS n FROM usage WHERE ts >= ?', month).n,
+      monthChunks: this.one("SELECT COUNT(*) AS n FROM usage WHERE ts >= ? AND model != 'summary'", month).n,
+      monthSummaries: this.one("SELECT COUNT(*) AS n FROM usage WHERE ts >= ? AND model = 'summary'", month).n,
       monthMinutes: this.minutesByModel(month),
       packMinutes: this.one('SELECT COALESCE(SUM(pack_credits), 0) AS n FROM usage WHERE ts >= ?', month).n,
       emails24: this.one('SELECT COUNT(*) AS n FROM emails WHERE ts >= ?', day).n,
       daily: this.sql.exec(
-        `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch') AS day, model, SUM(seconds) AS seconds
+        `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch') AS day, model, SUM(seconds) AS seconds, SUM(credits) AS credits
          FROM usage WHERE ts >= ? GROUP BY day, model`, from30 - 86400000).toArray(),
       topUsers: this.sql.exec(
         `SELECT email, SUM(seconds) AS seconds, SUM(credits) AS credits FROM usage WHERE ts >= ?

@@ -60,21 +60,22 @@ export async function adminManifest(env, store) {
   const reading = ledger.find(e => e.kind === 'balance') || null;
   const readingDayEnd = reading ? Date.parse(dayKey(reading.ts) + 'T00:00:00Z') + DAY : 0;
   const d = await store.adminData({ month, from30, day: now - DAY, readingTs: reading ? reading.ts : null, readingDayEnd });
-  const costOf = m => m.fast * COST_PER_MINUTE.fast + m.strong * COST_PER_MINUTE.strong;
+  const costOf = m => m.fast * COST_PER_MINUTE.fast + m.strong * COST_PER_MINUTE.strong + (m.summary || 0) * COST_PER_MINUTE.fast;
   const ids = modelIds(env);
 
   // Estimated cost per day and model, from the minutes transcribed here.
   const labels = [];
   for (let t = now - 29 * DAY; t <= now; t += DAY) labels.push(dayKey(t));
-  const est = { fast: labels.map(() => 0), strong: labels.map(() => 0) };
+  const est = { fast: labels.map(() => 0), strong: labels.map(() => 0), summary: labels.map(() => 0) };
   const mins = { fast: labels.map(() => 0), strong: labels.map(() => 0) };
   for (const r of d.daily) {
     const i = labels.indexOf(r.day);
     if (i < 0 || !est[r.model]) continue;
+    if (r.model === 'summary') { est.summary[i] += r.credits * COST_PER_MINUTE.fast; continue; }
     est[r.model][i] += (r.seconds / 60) * COST_PER_MINUTE[r.model];
     mins[r.model][i] += r.seconds / 60;
   }
-  const estDay = labels.map((_, i) => est.fast[i] + est.strong[i]);
+  const estDay = labels.map((_, i) => est.fast[i] + est.strong[i] + est.summary[i]);
 
   // Real spending from OpenAI when there is an admin key.
   const costs = await openaiCosts(env, store, Math.min(from30, reading ? reading.ts - DAY : from30));
@@ -142,7 +143,7 @@ export async function adminManifest(env, store) {
           real
             ? { type: 'chart', label: 'עלות ליום, 30 יום', unit: '$', labels, series: [{ name: 'OpenAI', values: dayCost.map(round2) }] }
             : { type: 'chart', label: 'עלות ליום (הערכה), 30 יום', unit: '$', labels, stacked: true,
-              series: [{ name: 'מהיר', values: est.fast.map(v => Math.round(v * 1000) / 1000) }, { name: 'מדויק', values: est.strong.map(v => Math.round(v * 1000) / 1000) }] },
+              series: [{ name: 'מהיר', values: est.fast.map(v => Math.round(v * 1000) / 1000) }, { name: 'מדויק', values: est.strong.map(v => Math.round(v * 1000) / 1000) }, { name: 'סיכומים', values: est.summary.map(v => Math.round(v * 1000) / 1000) }] },
         ],
       },
       {
@@ -153,6 +154,7 @@ export async function adminManifest(env, store) {
           { type: 'kpi', label: 'משתמשים חדשים', value: d.newUsers },
           { type: 'kpi', label: 'דקות תמלול', value: Math.round(monthMin.fast + monthMin.strong).toLocaleString('he-IL') },
           { type: 'kpi', label: 'קבצים שתומללו', value: d.monthChunks.toLocaleString('he-IL'), sub: 'קטעים שנשלחו ל-OpenAI' },
+          { type: 'kpi', label: 'סיכומי AI', value: d.monthSummaries.toLocaleString('he-IL'), sub: `≈ ${usd(d.monthMinutes.summary * COST_PER_MINUTE.fast)}` },
           { type: 'kpi', label: 'דקות מחבילות ומתנות', value: Math.round(d.packMinutes) },
           { type: 'kpi', label: 'מיילים ב-24 שעות', value: d.emails24 },
           { type: 'chart', label: 'דקות תמלול ליום, 30 יום', unit: 'דק׳', labels, stacked: true,

@@ -3,6 +3,8 @@ import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
 import { sendTranscriptEmail } from './mail.js';
 import { authenticate, userPlan, clientId } from './sso.js';
 import { adminManifest, adminAction } from './admin.js';
+import { uploadFile, summarize, summaryLevel, MAX_FILE_BYTES } from './summary.js';
+import { SUMMARY_STYLES, SUMMARY_LEVELS } from './plans.js';
 
 export { Store } from './store.js';
 
@@ -54,6 +56,18 @@ async function route(request, env, url) {
   if (path === '/api/me' && method === 'GET') return json(await accountState(env, store, user));
   if (path === '/api/transcribe' && method === 'POST') return transcribe(request, env, store, user, url);
   if (path === '/api/email' && method === 'POST') return email(request, env, store, user);
+  if (path === '/api/summary/file' && method === 'POST') {
+    const ent = await entitlement(env, store, user);
+    const r = await uploadFile(request, env, store, user, ent.plan);
+    return json(r.data, r.status);
+  }
+  if (path === '/api/summarize' && method === 'POST') {
+    const ent = await entitlement(env, store, user);
+    // Paid from the quota like transcription (monthly minutes first, then extra minutes).
+    const reserveFor = credits => store.reserve(user.email, ent.periodStart, ent.plan.credits, 'summary', 0, credits, extraTotals(ent).usable);
+    const r = await summarize(request, env, store, user, ent, reserveFor);
+    return json(r.data, r.status);
+  }
 
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
@@ -105,6 +119,10 @@ function publicConfig(env) {
     maxUploadBytes: MAX_UPLOAD_BYTES,
     // Fallbacks for plans whose JSON in the dashboard doesn't set minutes/strong/email.
     planDefaults: PLAN_DEFAULTS,
+    // AI summary styles: { id: label }, and how big a file may be.
+    summaryStyles: Object.fromEntries(Object.entries(SUMMARY_STYLES).map(([k, v]) => [k, v.label])),
+    summaryLevels: SUMMARY_LEVELS,
+    maxSummaryFileBytes: MAX_FILE_BYTES,
   };
 }
 
@@ -125,6 +143,7 @@ function extraTotals(ent) {
 async function accountState(env, store, user) {
   const ent = await entitlement(env, store, user);
   const used = await store.usedSince(user.email, ent.periodStart);
+  const hasSummarized = await store.hasSummarized(user.email);
   const unlimited = !!ent.plan.unlimited;
   const allowed = ent.packs.eligible;
   const extra = extraTotals(ent);
@@ -136,6 +155,11 @@ async function accountState(env, store, user) {
     plan: { key: ent.plan.key, name: ent.plan.name, credits: unlimited ? null : ent.plan.credits },
     unlimited,
     features: { strong: !!ent.plan.strong, email: !!ent.plan.email },
+    // AI summaries: what this plan may do, and whether the one trial summary is still there.
+    summary: (() => {
+      const l = summaryLevel(ent.plan);
+      return { level: l.level, styles: l.styles, files: l.files, pages: l.pages, texts: l.texts, trialLeft: l.trial ? !hasSummarized : false };
+    })(),
     used: Math.round(used * 100) / 100,
     // What can be transcribed now: the month's quota plus usable pack minutes.
     remaining: unlimited ? null : Math.round((planRemaining + usable) * 100) / 100,

@@ -1,4 +1,5 @@
 import { decodeToMono, planChunks, encodeWav } from './audio.js';
+import { initSummary } from './summary.js';
 
 const $ = id => document.getElementById(id);
 const CONCURRENCY = 3;
@@ -233,13 +234,14 @@ const money = (v, c) => ({ ILS: '₪', USD: '$', EUR: '€' }[c] || (c || '') + 
 // A catalog plan with its minutes and features (from its JSON in the dashboard, or the defaults).
 function planInfo(p) {
   const key = planKey(p.id);
-  const def = (config.planDefaults || {})[key] || (p.price ? { credits: 180, strong: true, email: true } : { credits: 10, strong: false, email: false });
+  const def = (config.planDefaults || {})[key] || (p.price ? { credits: 180, strong: true, email: true, summary: 1 } : { credits: 10, strong: false, email: false, summary: 0 });
   const f = p.features || {};
   return {
     ...p, key,
     credits: Number.isFinite(Number(f.minutes)) && f.minutes !== null && f.minutes !== '' && Number(f.minutes) >= 0 ? Number(f.minutes) : def.credits,
     strong: typeof f.strong === 'boolean' ? f.strong : def.strong,
     email: typeof f.email === 'boolean' ? f.email : def.email,
+    summary: Number.isFinite(Number(f.summary)) && f.summary !== null && f.summary !== '' ? Number(f.summary) : def.summary || 0,
   };
 }
 
@@ -273,6 +275,8 @@ function renderPlans() {
     ul.append(el('li', '', `${plan.credits.toLocaleString('he-IL')} דקות תמלול בחודש${hours}`));
     ul.append(el('li', '', plan.strong ? 'מודל מהיר ומודל מדויק' : 'מודל מהיר בלבד'));
     ul.append(el('li', '', plan.email ? 'הורדה כ-TXT ושליחה למייל' : 'הורדה כ-TXT'));
+    const summaryLine = ['', 'סיכום AI של כל תמלול', 'סיכום AI עם מצגות השיעור', 'סיכום AI של כמה שיעורים יחד, עם חומרים'][plan.summary] || '';
+    if (summaryLine) ul.append(el('li', '', summaryLine));
     card.append(ul);
 
     if (me?.unlimited) {
@@ -392,6 +396,7 @@ function bindWorkspace() {
   });
 
   $('startBtn').onclick = start;
+  initSummary({ $, me: () => me, config: () => config, api, toast, download, el, fmtDate, history: loadHistory, refreshMe, renderQuota });
   $('downloadBtn').onclick = () => download($('resultText').value, $('resultText').dataset.name || 'transcript');
   $('copyBtn').onclick = async () => {
     try { await navigator.clipboard.writeText($('resultText').value); toast('הועתק'); }
@@ -528,6 +533,7 @@ async function uploadChunk(blob, { kind, lang, hint }) {
 }
 
 function showResult(text, name, seconds, partial) {
+  $('summaryCard').hidden = true;
   $('resultText').value = text;
   $('resultText').dataset.name = name;
   const mins = Math.round(seconds / 60);
@@ -696,6 +702,7 @@ function renderHistory() {
     const btns = el('div', 'btns', '');
     const open = el('button', 'btn btn-ghost btn-sm', 'פתיחה');
     open.onclick = () => {
+      $('summaryCard').hidden = true;
       $('resultText').value = h.text;
       $('resultText').dataset.name = h.name;
       $('resultMeta').textContent = h.name;

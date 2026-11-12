@@ -40,6 +40,7 @@ function pickFeatures(f) {
   if (f.minutes !== null && f.minutes !== '' && Number.isFinite(Number(f.minutes)) && Number(f.minutes) >= 0) out.credits = Number(f.minutes);
   if (typeof f.strong === 'boolean') out.strong = f.strong;
   if (typeof f.email === 'boolean') out.email = f.email;
+  if (Number.isFinite(Number(f.summary)) && f.summary !== null && f.summary !== '') out.summary = Math.max(0, Math.min(3, Math.round(Number(f.summary))));
   return out;
 }
 
@@ -52,7 +53,7 @@ export function userPlan(env, user) {
   const features = access.features && typeof access.features === 'object' ? access.features : {};
   const base = PLAN_DEFAULTS[key] || (key === 'free' ? PLAN_DEFAULTS.free : PAID_DEFAULT);
   let plan = { key, name: access.plan?.name || 'ללא מנוי', ...base, ...pickFeatures(features) };
-  if (isUnlimited(features)) plan = { ...plan, name: 'ללא הגבלה', credits: Infinity, strong: true, email: true, unlimited: true };
+  if (isUnlimited(features)) plan = { ...plan, name: 'ללא הגבלה', credits: Infinity, strong: true, email: true, summary: 3, unlimited: true };
   // Extra-minute packs, sold by reem.bi (dashboard → Packs, {"minutes": 100}): the minutes bought
   // in total, and whether the user's plan is one the packs are for (otherwise they're frozen).
   const p = access.packs && typeof access.packs === 'object' ? access.packs : {};

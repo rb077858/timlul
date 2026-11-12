@@ -54,6 +54,19 @@ async function mock(req) {
     const today = Math.floor(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) / 1000);
     return Response.json({ data: [{ start_time: today, end_time: today + 86400, results: [{ amount: { value: 1.4, currency: 'usd' } }] }], has_more: false });
   }
+  if (url.host === 'api.openai.com' && url.pathname.startsWith('/v1/files')) {
+    if (req.method === 'DELETE') { deletedFiles.push(url.pathname.split('/').pop()); return Response.json({ deleted: true }); }
+    const text = await req.text();
+    if (!/name="purpose"\r\n\r\nuser_data/.test(text)) return Response.json({ error: { message: 'no purpose' } }, { status: 400 });
+    return Response.json({ id: 'file-' + (++fileN) });
+  }
+  if (url.host === 'api.openai.com' && url.pathname === '/v1/responses') {
+    const body = await req.json();
+    summaryCalls.push(body);
+    if (openaiFails) return Response.json({ error: { message: 'boom' } }, { status: 500 });
+    return Response.json({ status: 'completed', output: [{ type: 'reasoning' }, { type: 'message', content: [{ type: 'output_text', text: '## סיכום\n- נקודה ראשונה' }] }],
+      usage: { input_tokens: 3000, output_tokens: 1000 } });
+  }
   if (url.host === 'api.openai.com') {
     const body = new Uint8Array(await req.arrayBuffer());
     calls.at(-1).body = body;
@@ -70,6 +83,9 @@ async function mock(req) {
   return new Response('unexpected ' + req.url, { status: 599 });
 }
 
+let fileN = 0;
+const deletedFiles = [];
+const summaryCalls = [];
 let mf;
 before(async () => {
   mf = new Miniflare({
@@ -322,6 +338,70 @@ test('no free plan: a new user has only the welcome gift, fast model, no email',
   assert.equal((await transcribe('nogift@example.com', 30)).status, 402);
 });
 
+test('AI summaries: levels per plan, files, and paid from the quota by what they cost', async () => {
+  const summarize = (who, body) => post('/api/summarize', who, body);
+  const upload = (who, type = 'application/pdf', bytes = 1000) => mf.dispatchFetch(BASE + '/api/summary/file', {
+    method: 'POST', headers: { ...as(who), 'Content-Type': type, 'Content-Length': String(bytes), 'X-Filename': encodeURIComponent('מצגת.pdf') }, body: new Uint8Array(bytes),
+  });
+  const T = [{ title: 'שיעור 1', text: 'שלום '.repeat(200) }];
+
+  // No plan: one small trial summary, short styles only, from the welcome gift.
+  const fresh = 'trial@example.com';
+  dash[fresh] = { plan: null, bonus: 10 };
+  let m = await me(fresh);
+  assert.deepEqual([m.summary.level, m.summary.trialLeft], [0, true]);
+  assert.equal((await summarize(fresh, { style: 'lesson', texts: T })).status, 403);
+  let r = await summarize(fresh, { style: 'short', texts: T });
+  assert.equal(r.status, 200);
+  const out = await r.json();
+  assert.equal(out.text, '## סיכום\n- נקודה ראשונה');
+  assert.equal(out.credits, 1, '$0.00275 → 1 credit of $0.003');
+  assert.equal(summaryCalls.at(-1).model, 'gpt-5-mini');
+  assert.equal(summaryCalls.at(-1).max_output_tokens, 3000, 'a small trial');
+  m = await me(fresh);
+  assert.equal(m.remaining, 9);
+  assert.equal(m.summary.trialLeft, false);
+  assert.equal((await summarize(fresh, { style: 'short', texts: T })).status, 403, 'once');
+
+  // Basic: summaries, no files, one transcript.
+  const basic = 'sumbasic@example.com';
+  dash[basic] = { plan: 'timlul:basic' };
+  assert.equal((await upload(basic)).status, 403);
+  assert.equal((await summarize(basic, { style: 'questions', texts: T })).status, 403);
+  assert.equal((await summarize(basic, { style: 'bullets', texts: [...T, ...T] })).status, 403);
+  assert.equal((await summarize(basic, { style: 'bullets', texts: T })).status, 200);
+
+  // Pro: the lecture's slides; the file is deleted after; only its owner can use it.
+  const pro = 'sumpro@example.com';
+  dash[pro] = { plan: 'timlul:pro' };
+  assert.equal((await upload(pro, 'application/zip')).status, 400);
+  const f = await (await upload(pro)).json();
+  assert.match(f.id, /^file-/);
+  assert.equal((await summarize(basic, { style: 'bullets', texts: T, files: [f.id] })).status, 403);
+  assert.equal((await summarize(pro, { style: 'lesson', texts: T, files: [f.id], pages: 31 })).status, 403, '30 pages');
+  r = await summarize(pro, { style: 'lesson', texts: T, files: [f.id], pages: 12, extra: [{ name: 'notes.pptx', text: 'שקף 1' }] });
+  assert.equal(r.status, 200);
+  const content = summaryCalls.at(-1).input[0].content;
+  assert.deepEqual(content.map(c => c.type), ['input_text', 'input_text', 'input_file']);
+  assert.equal(content[2].file_id, f.id);
+  assert.ok(deletedFiles.includes(f.id), 'deleted at OpenAI right after');
+  assert.equal((await summarize(pro, { style: 'lesson', texts: T, files: [f.id] })).status, 400, 'gone');
+
+  // Business: several transcripts together.
+  const biz = 'sumbiz@example.com';
+  dash[biz] = { plan: 'timlul:business', override: { minutes: 100 } };
+  assert.equal((await summarize(biz, { style: 'terms', texts: [...T, ...T, ...T] })).status, 200);
+
+  // A failed summary costs nothing; no minutes left, no summary.
+  openaiFails = true;
+  const before = (await me(biz)).used;
+  assert.equal((await summarize(biz, { style: 'short', texts: T })).status, 502);
+  openaiFails = false;
+  assert.equal((await me(biz)).used, before);
+  dash['broke@example.com'] = { plan: 'timlul:basic', override: { minutes: 0 } };
+  assert.equal((await summarize('broke@example.com', { style: 'short', texts: T })).status, 402);
+});
+
 test('out of minutes: business users are told about packs, others are not', async () => {
   dash['biz2@example.com'] = { plan: 'timlul:business' };
   let res = await transcribe('biz2@example.com', 4 * 60);
@@ -354,7 +434,7 @@ test('admin manifest for the reem.bi dashboard, with CORS only for login.reembir
   assert.equal(m.version, 2);
   assert.equal(m.stats.find(s => s.label === 'עלות OpenAI החודש').value, '$1.40', 'from the Costs API');
   const items = m.sections.flatMap(x => x.items);
-  assert.equal(items.find(i => i.label === 'דקות מחבילות ומתנות').value, 14);
+  assert.equal(items.find(i => i.label === 'דקות מחבילות ומתנות').value, 15, '14 minutes of transcription and 1 for the trial summary');
   assert.equal(items.find(i => i.type === 'note').tone, 'warn', 'balance unknown yet');
   assert.equal(items.find(i => i.type === 'chart').labels.length, 30);
   assert.deepEqual(m.finance, { cost_month_usd: 1.4, cost_30d_usd: 1.4, source: 'openai', usd_ils: 3.2 });

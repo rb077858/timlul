@@ -100,7 +100,11 @@ h2 { font-size: 1.15rem; }
 .hero-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .hero-shot { margin: 0; position: relative; }
 .hero-shot::before { content: ""; position: absolute; inset: 8% -4% -6% 6%; background: radial-gradient(closest-side, var(--primary-soft), transparent); z-index: 0; }
-.hero-shot img { position: relative; z-index: 1; width: 100%; height: auto; display: block; border-radius: var(--radius); box-shadow: 0 2px 4px rgba(20, 24, 50, .06), 0 24px 48px rgba(20, 24, 50, .14); transform: rotate(-1.2deg); }
+.hero-shot img { position: relative; z-index: 1; width: 100%; max-width: 540px; height: auto; display: block; margin-inline: auto; }
+/* On wide screens the hero is wider than the page column, so the picture can be read. */
+@media (min-width: 761px) {
+  .hero:not(.signed-in) { --hw: min(1080px, calc(100vw - 48px)); width: var(--hw); margin-inline: calc((100% - var(--hw)) / 2); }
+}
 .hero.signed-in { display: block; text-align: center; padding-bottom: 12px; }
 .hero.signed-in .lead { margin-inline: auto; }
 
@@ -158,6 +162,35 @@ textarea { resize: vertical; line-height: 1.7; }
 .notice-error { background: var(--danger-soft); color: var(--danger); }
 
 .result-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+
+/* AI summary */
+.btn-ai { background: linear-gradient(135deg, var(--primary), #a855f7); color: #fff; }
+.btn-ai:hover { filter: brightness(1.08); }
+.summary-card { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); }
+.sum-label { font-weight: 700; margin: 16px 0 8px; }
+.style-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.style-chip { position: relative; cursor: pointer; }
+.style-chip input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.style-chip span { display: inline-block; padding: 7px 14px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); font-weight: 600; font-size: .93rem; transition: background .2s, border-color .2s; }
+.style-chip input:checked + span { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.style-chip input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+.style-chip.locked { cursor: not-allowed; opacity: .55; }
+.drop-small { padding: 16px; gap: 4px; }
+.file-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.file-list li { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+.file-list .name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.multi-list { display: grid; gap: 6px; }
+.check-row { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+.check-row span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sum-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.summary-text { margin-top: 10px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); line-height: 1.75; }
+.summary-text h3 { font-size: 1.08rem; margin: 14px 0 6px; }
+.summary-text h3:first-child { margin-top: 0; }
+.summary-text p { margin: 0 0 8px; }
+.summary-text ul { margin: 0 0 10px; padding-inline-start: 22px; }
+.bar-fill.indeterminate { width: 35%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { margin-inline-start: -35%; } to { margin-inline-start: 100%; } }
+@media (prefers-reduced-motion: reduce) { .bar-fill.indeterminate { animation: none; width: 100%; opacity: .5; } }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 
 .history { list-style: none; margin: 0; padding: 0; }
@@ -230,6 +263,5 @@ th, td { text-align: start; padding: 8px; border-bottom: 1px solid var(--border)
   .hero { grid-template-columns: minmax(0, 1fr); text-align: center; gap: 24px; }
   .hero .lead { margin-inline: auto; }
   .hero-cta { align-items: center; }
-  .hero-shot img { transform: none; }
   .how { grid-template-columns: minmax(0, 1fr); }
 }
