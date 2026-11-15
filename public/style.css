@@ -86,13 +86,18 @@ h2 { font-size: 1.5rem; }
 /* ---------- hero ---------- */
 .hero { padding: 64px 0 56px; display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); gap: 56px; align-items: center; }
 .hero h1 { font-size: clamp(2.6rem, 5.6vw, 4.4rem); line-height: 1.02; margin-bottom: 26px; }
-.accent {
-  background: linear-gradient(transparent 60%, var(--mark) 60% 94%, transparent 94%) no-repeat right / 0% 100%;
-  animation: mark 1s .3s cubic-bezier(.3, .7, .2, 1) forwards; padding-inline: .08em;
-  color: inherit; white-space: nowrap;
+.accent { white-space: nowrap; }
+/* The highlighter hugs each word: its own band, as wide as the letters, sitting on the line of the text. */
+.accent span {
+  --band: 62%; --lift: 21%;
+  background: linear-gradient(var(--mark), var(--mark)) no-repeat right calc(100% - var(--lift)) / 0% var(--band);
+  animation: mark .8s cubic-bezier(.3, .7, .2, 1) forwards; padding: 0 .045em; margin-inline: -.045em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
 }
-@keyframes mark { to { background-size: 100% 100%; } }
-@media (prefers-reduced-motion: reduce) { .accent { animation: none; background-size: 100% 100%; } }
+.accent span:nth-child(2) { animation-delay: .75s; }
+.accent span:first-child { animation-delay: .3s; }
+@keyframes mark { to { background-size: 100% var(--band); } }
+@media (prefers-reduced-motion: reduce) { .accent span { animation: none; background-size: 100% var(--band); } }
 .lead { font-size: 1.2rem; line-height: 1.7; max-width: 34em; margin: 0 0 30px; color: var(--ink-2); }
 .hero-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 .hero-cta .small { font-family: var(--mono); font-size: .78rem; letter-spacing: .02em; color: var(--ink-2); }
