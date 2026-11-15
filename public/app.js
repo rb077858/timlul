@@ -177,7 +177,7 @@ function renderPartner() {
     : 'עוד לא הצטרפו דרכך. שתפו את הקישור!';
   $('partnerCopy').onclick = () => navigator.clipboard.writeText(a.link).then(() => toast('הקישור הועתק ✓'), () => $('partnerLink').select());
   $('partnerShare').hidden = !navigator.share;
-  $('partnerShare').onclick = () => navigator.share({ title: 'תמלול', text: 'תמלול אודיו לטקסט בעברית', url: a.link }).catch(() => {});
+  $('partnerShare').onclick = () => navigator.share({ title: 'תמלולי', text: 'תמלול אודיו לטקסט בעברית', url: a.link }).catch(() => {});
 }
 
 // Not a partner yet, and the program is open to everyone: a card to join (a random code is made).

@@ -266,6 +266,6 @@ async function email(request, env, store, user) {
 
 // ---------- admin ----------
 //
-// What the reem.bi admin shows on this site's page (login.reembir.com/admin → אתרים → תמלול):
+// What the reem.bi admin shows on this site's page (login.reembir.com/admin → אתרים → תמלולי):
 // usage and cost stats and the state of the settings. Plans, coupons and subscriptions are
 // managed there directly, so they're not here.

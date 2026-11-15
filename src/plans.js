@@ -1,5 +1,5 @@
 // Plans, prices, coupons and subscriptions are all managed in the reem.bi admin
-// (login.reembir.com/admin → אתרים → תמלול). This file only has the defaults used when a
+// (login.reembir.com/admin → אתרים → תמלולי). This file only has the defaults used when a
 // plan in the dashboard doesn't say otherwise in its JSON: {"minutes": 180, "strong": true, "email": true}.
 //
 // Usage is counted in "credits": one minute of audio with the fast model

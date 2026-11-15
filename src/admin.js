@@ -1,4 +1,4 @@
-// What this site shares with the reem.bi dashboard (Sites → תמלול → נתונים), through
+// What this site shares with the reem.bi dashboard (Sites → תמלולי → נתונים), through
 // GET /api/admin/manifest, and the forms it offers there (POST /api/admin/actions/<id>).
 //
 // OpenAI has no API for the prepaid credit balance, so the balance is kept here: the admin types
@@ -113,7 +113,7 @@ export async function adminManifest(env, store) {
 
   return {
     version: 2,
-    name: 'תמלול',
+    name: 'תמלולי',
     finance: { cost_month_usd: round2(monthCost), cost_30d_usd: round2(cost30), source: real ? 'openai' : 'estimate', usd_ils: USD_ILS },
     // Short numbers for the site's overview tab (the dashboard shows everything else under "נתונים").
     stats: [
