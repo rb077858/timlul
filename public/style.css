@@ -62,7 +62,9 @@ h2 { font-size: 1.5rem; }
 .topnav { display: flex; align-items: center; gap: 22px; min-width: 0; }
 .topnav > a { font-weight: 600; }
 .auth-area, .user-menu { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.user-name { font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-name { font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+#adminLink { font-family: var(--mono); font-size: .72rem; letter-spacing: .04em; text-decoration: none; border: 1px solid var(--ink); padding: 2px 8px; }
+#adminLink:hover { background: var(--mark); color: #1a1814; }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -92,7 +94,7 @@ h2 { font-size: 1.5rem; }
   --band: 62%; --lift: 21%;
   background: linear-gradient(var(--mark), var(--mark)) no-repeat right calc(100% - var(--lift)) / 0% var(--band);
   animation: mark .8s cubic-bezier(.3, .7, .2, 1) forwards; padding: 0 .045em; margin-inline: -.045em;
-  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; color: #1a1814;
 }
 .accent span:nth-child(2) { animation-delay: .75s; }
 .accent span:first-child { animation-delay: .3s; }
@@ -142,19 +144,14 @@ h2 { font-size: 1.5rem; }
 .card h2 { margin-top: 4px; }
 .card h2:not(:first-child) { margin-top: 30px; }
 
-.quota { background: var(--ink); color: var(--paper); }
-.quota .muted { color: color-mix(in srgb, var(--paper) 62%, var(--ink)); }
+.quota { border-inline-start: 8px solid var(--mark); }
 .quota-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .plan-name { font-family: var(--serif); font-weight: 900; font-size: 2.1rem; line-height: 1.1; }
 .quota-num b { font-family: var(--serif); font-weight: 900; font-size: 3.4rem; line-height: 1; letter-spacing: -.02em; }
 .quota-foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-.quota .link-btn { color: var(--paper); }
 /* progress as a ruler */
 .bar { height: 14px; margin-top: 14px; border: 1.5px solid var(--ink); background: repeating-linear-gradient(to left, transparent 0 7px, var(--rule) 7px 8px); overflow: hidden; }
-.bar-fill { height: 100%; width: 0; background: var(--ink); transition: width .3s; }
-.quota .bar { border-color: var(--paper); background: repeating-linear-gradient(to left, transparent 0 7px, color-mix(in srgb, var(--paper) 30%, var(--ink)) 7px 8px); }
-.quota .bar-fill { background: var(--mark); }
-
+.bar-fill { height: 100%; width: 0; background: var(--mark); transition: width .3s; box-shadow: inset 0 0 0 1px var(--ink); }
 /* upload: a viewfinder */
 .drop {
   --c: var(--ink);
@@ -262,18 +259,12 @@ textarea {
 .plan ul { list-style: none; padding: 0; margin: 10px 0 16px; flex: 1; border-top: 1px solid var(--rule); }
 .plan li { padding: 8px 0; padding-inline-start: 22px; position: relative; font-size: .98rem; border-bottom: 1px solid var(--rule); }
 .plan li::before { content: ''; position: absolute; inset-inline-start: 0; top: 1.05em; width: 11px; height: 2px; background: var(--ink); }
-.plan.featured { background: var(--ink); color: var(--paper); }
-.plan.featured .muted, .plan.featured .price small { color: color-mix(in srgb, var(--paper) 62%, var(--ink)); }
-.plan.featured ul, .plan.featured li { border-color: color-mix(in srgb, var(--paper) 28%, var(--ink)); }
-.plan.featured li::before { background: var(--mark); }
+.plan.featured { box-shadow: inset 0 8px 0 var(--mark); padding-top: 36px; }
 .plan-badge { align-self: flex-start; background: var(--mark); color: #1a1814; font-family: var(--mono); font-size: .72rem; font-weight: 500; letter-spacing: .06em; padding: 2px 10px; }
-.plan.featured .btn-ghost { color: var(--paper); border-color: var(--paper); }
-.plan.featured .btn-ghost:not(:disabled):hover { background: var(--mark); color: #1a1814; border-color: var(--mark); }
 .plan .pp { min-height: 46px; }
 .plan .state { font-weight: 700; text-align: center; padding: 10px 12px; background: var(--mark); color: #1a1814; }
 .old-price { display: block; font-family: var(--sans); font-size: 1rem; font-weight: 400; color: var(--ink-2); line-height: 1.2; }
 .offer { font-size: .88rem; font-weight: 700; color: var(--ok); }
-.plan.featured .offer { color: var(--mark); }
 
 .packs { margin: 56px 0 8px; }
 .packs-title { font-size: 1.8rem; margin: 0 0 6px; }
@@ -299,12 +290,12 @@ textarea {
 .faq p { margin: 0 0 18px; max-width: 46em; color: var(--ink-2); }
 
 /* ---------- footer ---------- */
-.footer { background: var(--ink); color: var(--paper); margin-top: 40px; }
+.footer { background: var(--paper-2); color: var(--ink); margin-top: 40px; border-top: 1.5px solid var(--ink); }
 .foot { display: grid; grid-template-columns: auto 1fr; gap: 20px 48px; padding-top: 44px; padding-bottom: 36px; align-items: start; }
 .wordmark { font-family: var(--serif); font-weight: 900; font-size: 2.6rem; line-height: 1; }
 .footer .contact { display: flex; flex-wrap: wrap; gap: 8px 28px; font-size: .95rem; justify-content: flex-end; }
-.footer .legal { grid-column: 1 / -1; padding-top: 18px; border-top: 1px solid color-mix(in srgb, var(--paper) 25%, var(--ink)); color: color-mix(in srgb, var(--paper) 62%, var(--ink)); font-family: var(--mono); font-size: .75rem; }
-.footer .link-btn, .footer a { color: var(--paper); }
+.footer .legal { grid-column: 1 / -1; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--ink-2); font-family: var(--mono); font-size: .75rem; }
+.footer .link-btn, .footer a { color: var(--ink); }
 .ltr-inline { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 .faq .link-btn { font-weight: 700; color: var(--ink); }
 
@@ -341,7 +332,8 @@ th, td { text-align: start; padding: 8px; border-bottom: 1px solid var(--rule); 
   body { font-size: 16.5px; }
   .wrap { padding: 0 18px; }
   .topnav > a { display: none; }
-  .user-name { max-width: 90px; }
+  .user-name { max-width: 72px; }
+  .auth-area, .user-menu { gap: 8px; }
   .card { padding: 20px 18px; }
   .models { grid-template-columns: 1fr; }
   .actions .btn { flex: 1 1 100%; }
