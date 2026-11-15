@@ -32,7 +32,7 @@ function accessFor(email) {
     features: { ...(planId ? PLANS[planId].features : {}), ...(a.override || {}) },
     subscription: a.subscription || null,
     packs: { eligible: PACK_PLANS.includes(planId), totals: a.packs ? { minutes: a.packs } : {}, count: a.packs ? 1 : 0 },
-    rewards: { totals: a.bonus ? { minutes: a.bonus } : {}, count: a.bonus ? 1 : 0 },
+    rewards: { totals: { ...(a.bonus ? { minutes: a.bonus } : {}), ...(a.addons || {}) }, count: a.bonus ? 1 : 0 },
     affiliate: a.affiliate || null,
     affiliate_program: a.program || null,
   };
@@ -371,21 +371,28 @@ test('AI summaries: levels per plan, files, and paid from the quota by what they
   assert.equal((await summarize(basic, { style: 'bullets', texts: [...T, ...T] })).status, 403);
   assert.equal((await summarize(basic, { style: 'bullets', texts: T })).status, 200);
 
-  // Pro: the lecture's slides; the file is deleted after; only its owner can use it.
+  // Pro: every style, but no files (Premium only).
   const pro = 'sumpro@example.com';
   dash[pro] = { plan: 'timlul:pro' };
-  assert.equal((await upload(pro, 'application/zip')).status, 400);
-  const f = await (await upload(pro)).json();
+  assert.equal((await upload(pro)).status, 403, 'files are Premium only');
+  assert.equal((await summarize(pro, { style: 'lesson', texts: T })).status, 200);
+  assert.equal((await summarize(pro, { style: 'lesson', texts: T, extra: [{ name: 'notes.txt', text: 'x' }] })).status, 403);
+
+  // Premium: the lecture's slides; the file is deleted after; only its owner can use it.
+  const prem = 'sumprem@example.com';
+  dash[prem] = { plan: 'timlul:business', override: { minutes: 100 } };
+  assert.equal((await upload(prem, 'application/zip')).status, 400);
+  const f = await (await upload(prem)).json();
   assert.match(f.id, /^file-/);
   assert.equal((await summarize(basic, { style: 'bullets', texts: T, files: [f.id] })).status, 403);
-  assert.equal((await summarize(pro, { style: 'lesson', texts: T, files: [f.id], pages: 31 })).status, 403, '30 pages');
-  r = await summarize(pro, { style: 'lesson', texts: T, files: [f.id], pages: 12, extra: [{ name: 'notes.pptx', text: 'שקף 1' }] });
+  assert.equal((await summarize(prem, { style: 'lesson', texts: T, files: [f.id], pages: 101 })).status, 403, '100 pages');
+  r = await summarize(prem, { style: 'lesson', texts: T, files: [f.id], pages: 12, extra: [{ name: 'notes.pptx', text: 'שקף 1' }] });
   assert.equal(r.status, 200);
   const content = summaryCalls.at(-1).input[0].content;
   assert.deepEqual(content.map(c => c.type), ['input_text', 'input_text', 'input_file']);
   assert.equal(content[2].file_id, f.id);
   assert.ok(deletedFiles.includes(f.id), 'deleted at OpenAI right after');
-  assert.equal((await summarize(pro, { style: 'lesson', texts: T, files: [f.id] })).status, 400, 'gone');
+  assert.equal((await summarize(prem, { style: 'lesson', texts: T, files: [f.id] })).status, 400, 'gone');
 
   // Business: several transcripts together.
   const biz = 'sumbiz@example.com';
@@ -478,4 +485,59 @@ test('chunking cuts at quiet moments and skips silence', () => {
   assert.equal(chunks.at(-1).end, s.length);
   assert.equal(planChunks(new Float32Array(120 * sr)).length, 0, 'silence is skipped');
   assert.ok(chunks.every(c => c.seconds <= 300));
+});
+
+test('add-ons from the dashboard: summaries and files for someone whose plan does not give them', async () => {
+  const summarize = (who, body) => post('/api/summarize', who, body);
+  const upload = who => mf.dispatchFetch(BASE + '/api/summary/file', {
+    method: 'POST', headers: { ...as(who), 'Content-Type': 'application/pdf', 'Content-Length': '1000', 'X-Filename': 'a.pdf' }, body: new Uint8Array(1000),
+  });
+  const T = [{ title: 'שיעור', text: 'שלום '.repeat(200) }];
+
+  // A Basic user: no "lesson" style and no files. The dashboard gives 2 summaries and 1 file.
+  const who = 'addon@example.com';
+  dash[who] = { plan: 'timlul:basic', addons: { summaries: 2, summary_files: 1 } };
+  assert.deepEqual((await me(who)).summary.addons, { summaries: 2, files: 1 });
+  assert.equal((await upload(who)).status, 200, 'a file is allowed by the add-on');
+  const usedBefore = (await me(who)).used;
+
+  let r = await summarize(who, { style: 'lesson', texts: T, files: ['x'], pages: 5 });
+  assert.equal(r.status, 400, 'not their file');
+  const f = await (await upload(who)).json();
+  r = await summarize(who, { style: 'lesson', texts: T, files: [f.id], pages: 31 });
+  assert.equal(r.status, 403, '30 pages through an add-on');
+  r = await summarize(who, { style: 'lesson', texts: T, files: [f.id], pages: 10 });
+  assert.equal(r.status, 200);
+  const out = await r.json();
+  assert.equal(out.addon, true);
+  assert.equal(out.credits, 0, 'not taken from the minutes');
+  let m = await me(who);
+  assert.equal(m.used, usedBefore, 'no minutes used');
+  assert.deepEqual(m.summary.addons, { summaries: 1, files: 0 });
+
+  // The file is used up; the plan's own styles still come from the plan (minutes), not the add-on.
+  assert.equal((await summarize(who, { style: 'lesson', texts: T, extra: [{ name: 'n.txt', text: 'x' }] })).status, 403, 'no files left');
+  r = await summarize(who, { style: 'short', texts: T });
+  assert.equal((await r.json()).addon, false, 'a style of the plan is paid from the plan');
+  assert.deepEqual((await me(who)).summary.addons, { summaries: 1, files: 0 });
+  assert.equal((await summarize(who, { style: 'terms', texts: T })).status, 200);
+  assert.deepEqual((await me(who)).summary.addons, { summaries: 0, files: 0 });
+  assert.equal((await summarize(who, { style: 'terms', texts: T })).status, 403, 'all used');
+
+  // No plan at all: summaries from the add-on instead of the trial; nothing is taken from the minutes.
+  const none = 'noplan@example.com';
+  dash[none] = { plan: null, bonus: 10, addons: { summaries: 1 } };
+  r = await summarize(none, { style: 'questions', texts: T });
+  assert.equal(r.status, 200);
+  assert.equal((await me(none)).summary.trialLeft, true, 'the trial summary is untouched');
+  assert.equal((await me(none)).remaining, 10);
+  assert.equal((await summarize(none, { style: 'questions', texts: T })).status, 403);
+
+  // A failed summary does not use the add-on up.
+  const fail = 'addonfail@example.com';
+  dash[fail] = { plan: 'timlul:basic', addons: { summaries: 1 } };
+  openaiFails = true;
+  assert.equal((await summarize(fail, { style: 'terms', texts: T })).status, 502);
+  openaiFails = false;
+  assert.deepEqual((await me(fail)).summary.addons, { summaries: 1, files: 0 });
 });

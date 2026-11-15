@@ -61,8 +61,12 @@ export function userPlan(env, user) {
   // Minutes from reem.bi's partner program (dashboard → Partners): a gift for joining through a
   // partner, or a partner's reward. Unlike packs they work on every plan.
   const bonus = minutes(access.rewards?.totals?.minutes);
+  // Add-ons given from the dashboard (reem.bi → Add-ons): a number of summaries / attachable files.
+  const whole = v => Math.floor(minutes(v));
+  const addons = { summaries: whole(access.rewards?.totals?.summaries), files: whole(access.rewards?.totals?.summary_files) };
   return {
     plan,
+    addons,
     expiresAt: access.plan_expires_at ? access.plan_expires_at * 1000 : null,
     subscription: access.subscription || null,
     packs: { eligible: !!p.eligible && !plan.unlimited, bought: minutes(p.totals?.minutes), bonus },

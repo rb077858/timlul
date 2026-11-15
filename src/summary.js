@@ -8,7 +8,7 @@
 //
 // Files (PDF, images) are streamed to OpenAI's file storage without buffering here, used by id
 // in the summary, and deleted right after (or within the hour if never used).
-import { COST_PER_MINUTE, SUMMARY_LEVELS, SUMMARY_STYLES } from './plans.js';
+import { COST_PER_MINUTE, SUMMARY_LEVELS, SUMMARY_STYLES, ADDON_FILE_PAGES, ADDON_MAX_CHARS, ADDON_KEYS } from './plans.js';
 
 const CREDIT_USD = COST_PER_MINUTE.fast;
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -22,6 +22,12 @@ export const summaryLevel = plan => SUMMARY_LEVELS[Math.max(0, Math.min(3, Math.
 
 const err = (status, error, message) => ({ status, data: { error, message } });
 
+/** What is left of the add-ons the dashboard gave the user: { summaries, files }. */
+export async function addonLeft(store, email, given) {
+  const left = async (granted, key) => Math.max(0, (Number(granted) || 0) - (await store.addonUsed(email, key)));
+  return { summaries: await left(given?.summaries, ADDON_KEYS.summaries), files: await left(given?.files, ADDON_KEYS.files) };
+}
+
 // ---------- files ----------
 
 async function deleteFiles(env, ids) {
@@ -31,9 +37,9 @@ async function deleteFiles(env, ids) {
 }
 
 /** POST /api/summary/file: the raw file in the body, its name in X-Filename. */
-export async function uploadFile(request, env, store, user, plan) {
+export async function uploadFile(request, env, store, user, plan, left) {
   const level = summaryLevel(plan);
-  if (!level.files) return err(403, 'upgrade', 'העלאת מצגות וחומרים זמינה בתוכנית Pro ומעלה');
+  if (!level.files && !(left && left.files > 0)) return err(403, 'upgrade', 'העלאת מצגות וחומרים זמינה בתוכנית Premium');
   const type = FILE_TYPES[(request.headers.get('Content-Type') || '').split(';')[0].trim()];
   if (!type) return err(400, 'bad_type', 'אפשר להעלות PDF או תמונה. מצגת PowerPoint נקראת בדפדפן');
   const length = Number(request.headers.get('Content-Length'));
@@ -95,23 +101,36 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
   const body = await request.json().catch(() => ({}));
   const style = String(body.style || 'short');
   if (!SUMMARY_STYLES[style]) return err(400, 'bad_style', 'סוג סיכום לא מוכר');
-  const trial = level.trial;
-  if (trial && (await store.hasSummarized(user.email))) return err(403, 'upgrade', 'סיכום הניסיון כבר נוצל. סיכומים זמינים בכל התוכניות בתשלום');
-  if (!level.styles.includes(style)) return err(403, 'upgrade', `"${SUMMARY_STYLES[style].label}" זמין בתוכנית Pro ומעלה`);
+  const left = await addonLeft(store, user.email, ent.addons);
+  // A summary the plan doesn't give (no plan after the trial, or a style above the plan) is taken from the
+  // user's "summaries" add-on, if the dashboard gave them any. That one is paid by the site, not by minutes.
+  const trialUsed = level.trial && (await store.hasSummarized(user.email));
+  const viaAddon = left.summaries > 0 && (level.level === 0 || !level.styles.includes(style));
+  const trial = level.trial && !viaAddon;
+  if (!viaAddon) {
+    if (trial && trialUsed) return err(403, 'upgrade', 'סיכום הניסיון כבר נוצל. סיכומים זמינים בכל התוכניות בתשלום');
+    if (!level.styles.includes(style)) return err(403, 'upgrade', `"${SUMMARY_STYLES[style].label}" זמין בתוכנית Pro ומעלה`);
+  }
 
   const texts = (Array.isArray(body.texts) ? body.texts : []).filter(t => t && typeof t.text === 'string' && t.text.trim());
   const extra = (Array.isArray(body.extra) ? body.extra : []).filter(t => t && typeof t.text === 'string' && t.text.trim());
   const files = Array.isArray(body.files) ? body.files.map(String) : [];
   if (!texts.length) return err(400, 'bad_request', 'אין תמלול לסכם');
   if (texts.length > level.texts) return err(403, 'upgrade', 'סיכום של כמה תמלולים יחד זמין בתוכנית Premium');
-  if (files.length + extra.length > level.files) {
-    return err(403, 'upgrade', level.files ? `אפשר לצרף עד ${level.files} קבצים` : 'צירוף מצגות וחומרים זמין בתוכנית Pro ומעלה');
+  // Attachments: the plan's own first, the rest from the "summary_files" add-on.
+  const attached = files.length + extra.length;
+  const fromAddon = Math.max(0, attached - level.files);
+  if (fromAddon > left.files) {
+    const most = level.files + left.files;
+    return err(403, 'upgrade', most ? `אפשר לצרף עד ${most} קבצים` : 'צירוף מצגות וחומרים זמין בתוכנית Premium');
   }
   const pages = Math.max(0, Math.round(Number(body.pages) || 0));
-  if (pages > level.pages && level.files) return err(403, 'too_large', `אפשר לצרף עד ${level.pages} עמודים`);
+  const pagesMax = fromAddon ? Math.max(level.pages, ADDON_FILE_PAGES) : level.pages;
+  if (attached && pages > pagesMax) return err(403, 'too_large', `אפשר לצרף עד ${pagesMax} עמודים`);
   if (files.length && !(await store.ownsSummaryFiles(user.email, files))) return err(400, 'bad_request', 'הקובץ לא נמצא. העלו אותו שוב');
   const chars = [...texts, ...extra].reduce((a, t) => a + t.text.length, 0);
-  if (chars > (trial ? TRIAL_CHARS : MAX_TEXT_CHARS)) return err(413, 'too_large', trial ? 'סיכום הניסיון מיועד לתמלול קצר' : 'הטקסט ארוך מדי לסיכום אחד');
+  const charsMax = trial ? TRIAL_CHARS : viaAddon ? ADDON_MAX_CHARS : MAX_TEXT_CHARS;
+  if (chars > charsMax) return err(413, 'too_large', trial ? 'סיכום הניסיון מיועד לתמלול קצר' : 'הטקסט ארוך מדי לסיכום אחד');
 
   // The worst case, reserved from the quota before calling OpenAI.
   const p = prices(env);
@@ -119,8 +138,9 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
   // Hebrew is about 2 characters a token; a PDF page sends its text and its picture.
   const estIn = chars / 2 + (pages ? pages * 1500 : files.length * 1500) + 1500;
   const worst = (estIn * p.input + maxOut * p.output) / 1e6;
-  const reservation = await reserveFor(Math.max(1, Math.ceil(worst / CREDIT_USD)));
-  if (!reservation.ok) return err(402, 'quota', 'אין מספיק דקות במכסה לסיכום הזה');
+  // An add-on summary is not taken from the minutes.
+  const reservation = viaAddon ? null : await reserveFor(Math.max(1, Math.ceil(worst / CREDIT_USD)));
+  if (reservation && !reservation.ok) return err(402, 'quota', 'אין מספיק דקות במכסה לסיכום הזה');
 
   const types = await store.summaryFileTypes(files);
   const content = [];
@@ -143,10 +163,13 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
     if (!text) throw new Error('OpenAI: empty summary');
     const usd = ((data.usage?.input_tokens || 0) * p.input + (data.usage?.output_tokens || 0) * p.output) / 1e6;
     const credits = Math.max(1, Math.ceil(usd / CREDIT_USD));
-    await store.settle(reservation.id, credits);
-    return { status: 200, data: { text, credits, partial: data.status === 'incomplete' } };
+    if (reservation) await store.settle(reservation.id, credits);
+    // Used up only now that it worked; the real cost is kept for the site's numbers.
+    if (viaAddon) await store.addonUse(user.email, ADDON_KEYS.summaries, 1, credits);
+    if (fromAddon) await store.addonUse(user.email, ADDON_KEYS.files, fromAddon);
+    return { status: 200, data: { text, credits: reservation ? credits : 0, partial: data.status === 'incomplete', addon: viaAddon } };
   } catch (e) {
-    await store.release(reservation.id);
+    if (reservation) await store.release(reservation.id);
     console.error('summary failed', e.message);
     return err(502, 'summary_failed', 'הסיכום נכשל. לא ירדו דקות. נסו שוב');
   } finally {

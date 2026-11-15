@@ -20,16 +20,22 @@ export const PAID_DEFAULT = { credits: 180, strong: true, email: true, summary: 
 // AI summaries (summary.js). A summary is paid from the same quota, by what it cost.
 //   0  no plan: one small trial summary (from the welcome gift), short styles only
 //   1  basic: summaries of a transcript
-//   2  pro: + all styles, + the lecture's slides and other material (2 files, 30 pages)
-//   3  business: + 5 files and 100 pages, + several transcripts together (a whole course)
+//   2  pro: + all styles
+//   3  premium: + the lecture's slides and other material (5 files, 100 pages), + several transcripts together
+// Add-ons from the dashboard (reem.bi → a user → Add-ons, or in bulk on the site's Add-ons tab) work on any plan:
+//   summaries      N summaries with every style, for someone whose plan doesn't give them (paid by the site, not the quota)
+//   summary_files  N files that may be attached, for someone whose plan doesn't allow it
 const BASIC_STYLES = ['short', 'bullets'];
 const ALL_STYLES = ['short', 'bullets', 'lesson', 'terms', 'questions'];
 export const SUMMARY_LEVELS = [
   { level: 0, trial: true, styles: BASIC_STYLES, files: 0, pages: 0, texts: 1 },
   { level: 1, styles: BASIC_STYLES, files: 0, pages: 0, texts: 1 },
-  { level: 2, styles: ALL_STYLES, files: 2, pages: 30, texts: 1 },
+  { level: 2, styles: ALL_STYLES, files: 0, pages: 0, texts: 1 },
   { level: 3, styles: ALL_STYLES, files: 5, pages: 100, texts: 5 },
 ];
+export const ADDON_FILE_PAGES = 30;       // pages in files attached through an add-on
+export const ADDON_MAX_CHARS = 150000;    // text of a summary made through an add-on (the site pays for it)
+export const ADDON_KEYS = { summaries: 'summaries', files: 'summary_files' };
 export const SUMMARY_STYLES = {
   short: { label: 'סיכום קצר', prompt: 'כתוב סיכום קצר: פסקת פתיחה של 2-3 משפטים על מה הדברים, ואחריה עד 6 נקודות עיקריות.' },
   bullets: { label: 'נקודות עיקריות', prompt: 'כתוב רשימה מסודרת של הנקודות העיקריות, מקובצות תחת כותרות קצרות לפי נושא.' },

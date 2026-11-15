@@ -30,23 +30,40 @@ export function initSummary(deps) {
 }
 
 const currentName = () => d.$('resultText').dataset.name || '';
-const level = () => d.me()?.summary || { level: 0, styles: ['short', 'bullets'], files: 0, pages: 0, texts: 1, trialLeft: false };
+// The plan's summary level plus what the site gave on top of it (add-ons): every style while there are
+// summaries left, and files beyond the plan's own.
+const planLevel = () => d.me()?.summary || { level: 0, styles: ['short', 'bullets'], files: 0, pages: 0, texts: 1, trialLeft: false };
+const addons = () => ({ summaries: 0, files: 0, ...(planLevel().addons || {}) });
+const level = () => {
+  const s = planLevel(), a = addons();
+  return {
+    ...s,
+    styles: a.summaries > 0 ? Object.keys(d.config().summaryStyles || {}) : s.styles,
+    files: s.files + a.files,
+    pages: a.files > 0 ? Math.max(s.pages, d.config().addonFilePages || 30) : s.pages,
+  };
+};
+// Would this summary come from the add-on (the plan doesn't give it)? Mirrors src/summary.js.
+const fromAddon = style => addons().summaries > 0 && (planLevel().level === 0 || !planLevel().styles.includes(style));
 
 // ---------- the card ----------
 
 export function openSummary() {
   const $ = d.$;
   const s = level();
-  const locked = s.level === 0 && !s.trialLeft;
+  const a = addons();
+  const locked = s.level === 0 && !s.trialLeft && !a.summaries;
   $('summaryCard').hidden = false;
   $('summaryFor').textContent = currentName();
-  $('summaryLocked').hidden = !locked && !s.trialLeft;
+  $('summaryLocked').hidden = !locked && !s.trialLeft && !a.summaries && !a.files;
   $('summaryLocked').innerHTML = '';
   if (locked) {
     $('summaryLocked').append(d.el('span', '', 'סיכומי AI זמינים בכל התוכניות בתשלום. '));
     const a = d.el('button', 'link-btn', 'לתוכניות');
     a.onclick = () => $('plans').scrollIntoView({ behavior: 'smooth' });
     $('summaryLocked').append(a);
+  } else if (a.summaries || a.files) {
+    $('summaryLocked').textContent = 'במתנה: ' + [a.summaries ? `${a.summaries} סיכומים` : '', a.files ? `${a.files} קבצים לצירוף` : ''].filter(Boolean).join(' ו-') + '.';
   } else if (s.trialLeft) {
     $('summaryLocked').textContent = 'סיכום ניסיון אחד במתנה (סיכום קצר או נקודות). בתוכניות בתשלום אפשר לסכם כל תמלול.';
   }
@@ -81,7 +98,7 @@ function renderFiles() {
   $('sumFilesBox').hidden = false;
   $('sumDrop').hidden = !s.files;
   $('sumFilesLocked').hidden = !!s.files;
-  $('sumFilesLimit').textContent = s.files ? `עד ${s.files} קבצים ו-${s.pages} עמודים` : '';
+  $('sumFilesLimit').textContent = s.files ? `עד ${s.files} קבצים ו-${s.pages} עמודים` + (addons().files ? ` (${addons().files} מהם במתנה)` : '') : '';
   const ul = $('sumFileList');
   ul.textContent = '';
   files.forEach((f, i) => {
@@ -139,6 +156,8 @@ function worstCredits() {
 }
 
 function updateCost() {
+  const style = d.$('summaryStyles').querySelector('input:checked')?.value || 'short';
+  if (fromAddon(style)) { d.$('summaryCost').textContent = 'סיכום מהמתנה שלך, לא יורדות דקות'; return; }
   const n = worstCredits();
   d.$('summaryCost').textContent = d.me()?.unlimited ? '' : `יוריד מהמכסה עד ${n} דקות, בדרך כלל פחות`;
 }
@@ -265,7 +284,7 @@ async function generate() {
     lastText = r.text;
     $('summaryText').innerHTML = renderMarkdown(r.text);
     $('summaryOut').hidden = false;
-    $('summaryMeta').textContent = (r.partial ? 'הסיכום ארוך ונקטע בסופו. ' : '') + (d.me()?.unlimited ? '' : `ירדו ${r.credits} דקות מהמכסה`);
+    $('summaryMeta').textContent = (r.partial ? 'הסיכום ארוך ונקטע בסופו. ' : '') + (r.addon ? 'נוצל סיכום מהמתנה שלך' : d.me()?.unlimited ? '' : `ירדו ${r.credits} דקות מהמכסה`);
     files = [];
     renderFiles();
     await d.refreshMe(true);

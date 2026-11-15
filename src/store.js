@@ -21,6 +21,8 @@ export class Store extends DurableObject {
       CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, ts INTEGER);
       CREATE TABLE IF NOT EXISTS summary_files (id TEXT PRIMARY KEY, email TEXT, type TEXT, ts INTEGER);
       CREATE INDEX IF NOT EXISTS usage_ts ON usage(ts);
+      CREATE TABLE IF NOT EXISTS addon_use (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, key TEXT, n INTEGER, credits REAL, ts INTEGER);
+      CREATE INDEX IF NOT EXISTS addon_use_email ON addon_use(email, key);
     `);
     // usage.pack_credits: the part of a row paid from packs instead of the monthly quota.
     const cols = this.sql.exec('PRAGMA table_info(usage)').toArray().map(c => c.name);
@@ -90,6 +92,13 @@ export class Store extends DurableObject {
     if (!r) return;
     const fromPlan = Math.min(r.credits - r.pack_credits, credits);
     this.sql.exec('UPDATE usage SET credits = ?, pack_credits = ? WHERE id = ?', credits, Math.max(0, credits - fromPlan), id);
+  }
+  // Add-ons given from the dashboard are counted up there; here, how many of them were used.
+  addonUsed(email, key) {
+    return this.one('SELECT COALESCE(SUM(n), 0) AS n FROM addon_use WHERE email = ? AND key = ?', email, key).n;
+  }
+  addonUse(email, key, n, credits = 0) {
+    this.sql.exec('INSERT INTO addon_use (email, key, n, credits, ts) VALUES (?, ?, ?, ?, ?)', email, key, n, credits, Date.now());
   }
   hasSummarized(email) {
     return !!this.one("SELECT 1 AS x FROM usage WHERE email = ? AND model = 'summary'", email);
