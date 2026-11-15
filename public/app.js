@@ -150,8 +150,8 @@ function renderQuota() {
   const usable = me.packs?.usable ?? (me.packs?.allowed ? extra : 0);
   if (extra > 0 && !me.unlimited && !noPlan) {
     if (usable >= extra - 0.01) detail += `כולל ${fmtMinutes(extra)} דקות נוספות, שנכנסות לפעולה אחרי המכסה החודשית.`;
-    else if (usable > 0) detail += `כולל ${fmtMinutes(usable)} דקות נוספות. עוד ${fmtMinutes(extra - usable)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
-    else detail += `${fmtMinutes(extra)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית העסקית.`;
+    else if (usable > 0) detail += `כולל ${fmtMinutes(usable)} דקות נוספות. עוד ${fmtMinutes(extra - usable)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית Premium.`;
+    else detail += `${fmtMinutes(extra)} דקות מחבילות שמורות לך, וזמינות עם מנוי לתוכנית Premium.`;
   }
   $('quotaDetail').textContent = detail;
   renderPartner();

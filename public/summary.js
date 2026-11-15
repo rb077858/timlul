@@ -70,7 +70,7 @@ function renderStyles() {
     const input = document.createElement('input');
     Object.assign(input, { type: 'radio', name: 'sumStyle', value: id, disabled: !ok, checked: ok && id === (s.styles.includes(current) ? current : 'short') });
     lab.append(input, d.el('span', '', (ok ? '' : '🔒 ') + label));
-    if (!ok) lab.title = 'בתוכנית מקצועי ומעלה';
+    if (!ok) lab.title = 'בתוכנית Pro ומעלה';
     box.append(lab);
   }
 }

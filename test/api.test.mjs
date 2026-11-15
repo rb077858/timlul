@@ -11,10 +11,10 @@ let openaiFails = false;
 // reem.bi: the plans of the site and each user's access, as /api/userinfo reports them.
 const PLANS = {
   'timlul:free': { name: 'חינם', features: { minutes: 10, strong: false, email: false } },
-  'timlul:basic': { name: 'בסיסי', features: { minutes: 180, strong: true, email: true } },
-  'timlul:pro': { name: 'מקצועי', features: { minutes: 700 } },
+  'timlul:basic': { name: 'Basic', features: { minutes: 180, strong: true, email: true } },
+  'timlul:pro': { name: 'Pro', features: { minutes: 700 } },
   'timlul:team': { name: 'צוות', features: { minutes: 5000, strong: true, email: true } },
-  'timlul:business': { name: 'עסקי', features: { minutes: 3, strong: true, email: true } },
+  'timlul:business': { name: 'Premium', features: { minutes: 3, strong: true, email: true } },
   'timlul:unlimited': { name: 'ללא הגבלה', features: { unlimited: true } },
 };
 const dash = {}; // email -> { plan, expires, override, subscription, packs, bonus, affiliate }
@@ -187,7 +187,7 @@ test('the plan, its minutes and its features come from reem.bi', async () => {
   dash['e@example.com'] = { plan: 'timlul:pro', expires: exp, subscription: { status: 'ACTIVE', plan_id: 'timlul:pro', paid_until: exp } };
   let m = await me('e@example.com');
   assert.equal(m.plan.key, 'pro');
-  assert.equal(m.plan.name, 'מקצועי');
+  assert.equal(m.plan.name, 'Pro');
   assert.equal(m.plan.credits, 700, 'minutes from the plan JSON');
   assert.deepEqual(m.features, { strong: true, email: true }, 'defaults for pro');
   assert.equal(m.planExpiresAt, exp * 1000);

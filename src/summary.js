@@ -33,7 +33,7 @@ async function deleteFiles(env, ids) {
 /** POST /api/summary/file: the raw file in the body, its name in X-Filename. */
 export async function uploadFile(request, env, store, user, plan) {
   const level = summaryLevel(plan);
-  if (!level.files) return err(403, 'upgrade', 'העלאת מצגות וחומרים זמינה בתוכנית מקצועי ומעלה');
+  if (!level.files) return err(403, 'upgrade', 'העלאת מצגות וחומרים זמינה בתוכנית Pro ומעלה');
   const type = FILE_TYPES[(request.headers.get('Content-Type') || '').split(';')[0].trim()];
   if (!type) return err(400, 'bad_type', 'אפשר להעלות PDF או תמונה. מצגת PowerPoint נקראת בדפדפן');
   const length = Number(request.headers.get('Content-Length'));
@@ -97,15 +97,15 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
   if (!SUMMARY_STYLES[style]) return err(400, 'bad_style', 'סוג סיכום לא מוכר');
   const trial = level.trial;
   if (trial && (await store.hasSummarized(user.email))) return err(403, 'upgrade', 'סיכום הניסיון כבר נוצל. סיכומים זמינים בכל התוכניות בתשלום');
-  if (!level.styles.includes(style)) return err(403, 'upgrade', `"${SUMMARY_STYLES[style].label}" זמין בתוכנית מקצועי ומעלה`);
+  if (!level.styles.includes(style)) return err(403, 'upgrade', `"${SUMMARY_STYLES[style].label}" זמין בתוכנית Pro ומעלה`);
 
   const texts = (Array.isArray(body.texts) ? body.texts : []).filter(t => t && typeof t.text === 'string' && t.text.trim());
   const extra = (Array.isArray(body.extra) ? body.extra : []).filter(t => t && typeof t.text === 'string' && t.text.trim());
   const files = Array.isArray(body.files) ? body.files.map(String) : [];
   if (!texts.length) return err(400, 'bad_request', 'אין תמלול לסכם');
-  if (texts.length > level.texts) return err(403, 'upgrade', 'סיכום של כמה תמלולים יחד זמין בתוכנית העסקית');
+  if (texts.length > level.texts) return err(403, 'upgrade', 'סיכום של כמה תמלולים יחד זמין בתוכנית Premium');
   if (files.length + extra.length > level.files) {
-    return err(403, 'upgrade', level.files ? `אפשר לצרף עד ${level.files} קבצים` : 'צירוף מצגות וחומרים זמין בתוכנית מקצועי ומעלה');
+    return err(403, 'upgrade', level.files ? `אפשר לצרף עד ${level.files} קבצים` : 'צירוף מצגות וחומרים זמין בתוכנית Pro ומעלה');
   }
   const pages = Math.max(0, Math.round(Number(body.pages) || 0));
   if (pages > level.pages && level.files) return err(403, 'too_large', `אפשר לצרף עד ${level.pages} עמודים`);
