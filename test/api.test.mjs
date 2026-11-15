@@ -515,14 +515,17 @@ test('add-ons from the dashboard: summaries and files for someone whose plan doe
   assert.equal(m.used, usedBefore, 'no minutes used');
   assert.deepEqual(m.summary.addons, { summaries: 1, files: 0 });
 
-  // The file is used up; the plan's own styles still come from the plan (minutes), not the add-on.
+  // The file is used up. The add-on summary is used first, even for a style the plan gives.
   assert.equal((await summarize(who, { style: 'lesson', texts: T, extra: [{ name: 'n.txt', text: 'x' }] })).status, 403, 'no files left');
   r = await summarize(who, { style: 'short', texts: T });
-  assert.equal((await r.json()).addon, false, 'a style of the plan is paid from the plan');
-  assert.deepEqual((await me(who)).summary.addons, { summaries: 1, files: 0 });
-  assert.equal((await summarize(who, { style: 'terms', texts: T })).status, 200);
+  assert.equal((await r.json()).addon, true, 'the add-on first');
+  assert.equal((await me(who)).used, usedBefore, 'still no minutes');
   assert.deepEqual((await me(who)).summary.addons, { summaries: 0, files: 0 });
-  assert.equal((await summarize(who, { style: 'terms', texts: T })).status, 403, 'all used');
+  // All used: back to the plan's own rules and minutes.
+  assert.equal((await summarize(who, { style: 'terms', texts: T })).status, 403);
+  r = await summarize(who, { style: 'bullets', texts: T });
+  assert.equal((await r.json()).addon, false);
+  assert.ok((await me(who)).used > usedBefore);
 
   // No plan at all: summaries from the add-on instead of the trial; nothing is taken from the minutes.
   const none = 'noplan@example.com';
@@ -540,4 +543,14 @@ test('add-ons from the dashboard: summaries and files for someone whose plan doe
   assert.equal((await summarize(fail, { style: 'terms', texts: T })).status, 502);
   openaiFails = false;
   assert.deepEqual((await me(fail)).summary.addons, { summaries: 1, files: 0 });
+});
+
+test('the unlimited plan summarizes several transcripts together, with files', async () => {
+  const who = 'unl-sum@example.com';
+  dash[who] = { plan: 'timlul:unlimited' };
+  const T = [{ title: 'a', text: 'שלום '.repeat(100) }];
+  const m = await me(who);
+  assert.deepEqual([m.summary.level, m.summary.texts, m.summary.files, m.summary.pages], [3, 5, 5, 100]);
+  assert.equal((await post('/api/summarize', who, { style: 'terms', texts: [...T, ...T, ...T, ...T, ...T] })).status, 200);
+  assert.equal((await post('/api/summarize', who, { style: 'terms', texts: [...T, ...T, ...T, ...T, ...T, ...T] })).status, 403, 'five at most');
 });

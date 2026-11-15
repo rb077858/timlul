@@ -43,8 +43,8 @@ const level = () => {
     pages: a.files > 0 ? Math.max(s.pages, d.config().addonFilePages || 30) : s.pages,
   };
 };
-// Would this summary come from the add-on (the plan doesn't give it)? Mirrors src/summary.js.
-const fromAddon = style => addons().summaries > 0 && (planLevel().level === 0 || !planLevel().styles.includes(style));
+// Would this summary come from the add-on? Add-on summaries are used first. Mirrors src/summary.js.
+const fromAddon = () => addons().summaries > 0;
 
 // ---------- the card ----------
 
@@ -156,8 +156,7 @@ function worstCredits() {
 }
 
 function updateCost() {
-  const style = d.$('summaryStyles').querySelector('input:checked')?.value || 'short';
-  if (fromAddon(style)) { d.$('summaryCost').textContent = 'סיכום מהמתנה שלך, לא יורדות דקות'; return; }
+  if (fromAddon()) { d.$('summaryCost').textContent = 'סיכום מהמתנה שלך, לא יורדות דקות'; return; }
   const n = worstCredits();
   d.$('summaryCost').textContent = d.me()?.unlimited ? '' : `יוריד מהמכסה עד ${n} דקות, בדרך כלל פחות`;
 }

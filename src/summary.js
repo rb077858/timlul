@@ -102,13 +102,13 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
   const style = String(body.style || 'short');
   if (!SUMMARY_STYLES[style]) return err(400, 'bad_style', 'סוג סיכום לא מוכר');
   const left = await addonLeft(store, user.email, ent.addons);
-  // A summary the plan doesn't give (no plan after the trial, or a style above the plan) is taken from the
-  // user's "summaries" add-on, if the dashboard gave them any. That one is paid by the site, not by minutes.
+  // A summary is taken from the user's "summaries" add-on first, if the dashboard gave them any (paid by the
+  // site, so no minutes go), and from the plan after. Without an add-on the plan's own rules apply.
   const trialUsed = level.trial && (await store.hasSummarized(user.email));
-  const viaAddon = left.summaries > 0 && (level.level === 0 || !level.styles.includes(style));
-  const trial = level.trial && !viaAddon;
-  if (!viaAddon) {
-    if (trial && trialUsed) return err(403, 'upgrade', 'סיכום הניסיון כבר נוצל. סיכומים זמינים בכל התוכניות בתשלום');
+  const wantsAddon = left.summaries > 0;
+  const planCovers = level.styles.includes(style) && !(level.trial && trialUsed);
+  if (!wantsAddon) {
+    if (level.trial && trialUsed) return err(403, 'upgrade', 'סיכום הניסיון כבר נוצל. סיכומים זמינים בכל התוכניות בתשלום');
     if (!level.styles.includes(style)) return err(403, 'upgrade', `"${SUMMARY_STYLES[style].label}" זמין בתוכנית Pro ומעלה`);
   }
 
@@ -129,6 +129,9 @@ export async function summarize(request, env, store, user, ent, reserveFor) {
   if (attached && pages > pagesMax) return err(403, 'too_large', `אפשר לצרף עד ${pagesMax} עמודים`);
   if (files.length && !(await store.ownsSummaryFiles(user.email, files))) return err(400, 'bad_request', 'הקובץ לא נמצא. העלו אותו שוב');
   const chars = [...texts, ...extra].reduce((a, t) => a + t.text.length, 0);
+  // A very long text can't come from the add-on (its cap protects the site's cost): the plan takes it, if it can.
+  const viaAddon = wantsAddon && (chars <= ADDON_MAX_CHARS || !planCovers);
+  const trial = level.trial && !viaAddon;
   const charsMax = trial ? TRIAL_CHARS : viaAddon ? ADDON_MAX_CHARS : MAX_TEXT_CHARS;
   if (chars > charsMax) return err(413, 'too_large', trial ? 'סיכום הניסיון מיועד לתמלול קצר' : 'הטקסט ארוך מדי לסיכום אחד');
 
