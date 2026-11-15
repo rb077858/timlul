@@ -199,7 +199,7 @@ function renderPartnerJoin() {
       await auth.affiliate.join();
       await refreshMe(true);
       renderQuota();
-      toast('הצטרפת לתוכנית השותפים! 🎉');
+      toast('הצטרפת לתוכנית השותפים!');
     } catch (e) {
       if (e.message !== 'login') toast(e.message || 'לא הצלחנו לצרף אותך, נסו שוב');
     } finally {
@@ -217,8 +217,8 @@ function applyFeatures() {
   if (!canStrong && strong.checked) document.querySelector('input[name="model"][value="fast"]').checked = true;
   $('strongNote').textContent = canStrong
     ? `המודל החזק ביותר. דקה = ${config.strongWeight} דקות מהמכסה`
-    : '🔒 זמין בתוכניות בתשלום';
-  $('emailBtn').textContent = me?.features?.email ? 'שליחה למייל שלי' : '🔒 שליחה למייל שלי';
+    : 'זמין בתוכניות בתשלום';
+  $('emailBtn').textContent = me?.features?.email ? 'שליחה למייל שלי' : 'שליחה למייל (בתוכניות בתשלום)';
 }
 
 // ---------- plans & PayPal (central billing of reem.bi, through the SDK) ----------
@@ -300,7 +300,7 @@ function renderPlans() {
             clearCoupon();
             await refreshMe(true);
             renderPlans();
-            toast('המנוי הופעל! תודה 🎉');
+            toast('המנוי הופעל, תודה!');
             $('workspace').scrollIntoView({ behavior: 'smooth' });
           },
           onError: err => showPlanNote(err && err.message && err.message !== 'login'
@@ -359,7 +359,7 @@ function renderPacks(plans) {
       auth.billing.packButton(slot, pack.id, {
         onSuccess: async () => {
           await refreshMe(true);
-          toast(`נוספו ${minutes} דקות! תודה 🎉`);
+          toast(`נוספו ${minutes} דקות, תודה!`);
           $('workspace').scrollIntoView({ behavior: 'smooth' });
         },
         onError: err => showPlanNote(err && err.message && err.message !== 'login'

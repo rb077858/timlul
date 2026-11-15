@@ -7,16 +7,18 @@
   <meta name="description" content="העלו קובץ אודיו או וידאו וקבלו תמלול מדויק כקובץ טקסט או במייל.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=Frank+Ruhl+Libre:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#f3eee3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#15130f" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231a1814'/%3E%3Cpath d='M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6' stroke='%23f5d63f' stroke-width='2.6'/%3E%3C/svg%3E">
 </head>
 <body>
   <header class="topbar">
     <div class="wrap topbar-inner">
       <a class="brand" href="/">
         <span class="logo" aria-hidden="true">
-          <svg viewBox="0 0 32 32"><path d="M8 13v6M12 9v14M16 12v8M20 7v18M24 13v6"/></svg>
+          <svg viewBox="0 0 32 32"><path d="M5 13v6M11 8v16M17 11v10M23 5v22M29 13v6"/></svg>
         </span>
         תמלולי
       </a>
@@ -41,23 +43,32 @@
         <h1>תמלול אודיו ווידאו, <span class="accent">בכמה דקות</span></h1>
         <p class="lead">מעלים הקלטה של שיעור, שיחה או סרטון ומקבלים את כל הטקסט. בלחיצה אחת גם סיכום AI, ואפשר לצרף את המצגת של המרצה כדי שיהיה מדויק. בעברית ובעוד עשרות שפות.</p>
         <div id="heroCta" class="hero-cta" hidden>
-          <button id="heroLogin" class="btn btn-primary btn-lg">התחברות והתחלה בחינם</button>
+          <button id="heroLogin" class="btn btn-primary btn-lg">התחברות והתחלה בחינם <span aria-hidden="true">&larr;</span></button>
           <span class="muted small">10 דקות מתנה להתחלה, בלי כרטיס אשראי</span>
         </div>
         <p id="sdkError" class="notice notice-error" hidden>מערכת ההתחברות לא זמינה כרגע. נסו לרענן את הדף בעוד כמה דקות.</p>
       </div>
-      <figure class="hero-shot" id="heroShot">
-        <picture>
-          <source srcset="img/flow-dark.png" media="(prefers-color-scheme: dark)">
-          <img src="img/flow-light.png" width="540" height="632" alt="איך זה עובד: מעלים הקלטה של שיעור, מקבלים את כל הטקסט, ויוצרים סיכום AI עם המצגת של המרצה: כותרות לפי נושא ונקודות עיקריות">
-        </picture>
+      <figure class="hero-shot" id="heroShot" aria-label="דוגמה: תמלול של שיעור, עם שורה מודגשת וסיכום">
+        <div class="sheet">
+          <div class="sheet-head"><span>lecture_03.m4a</span><span>47:12</span></div>
+          <svg class="wave" viewBox="0 0 320 40" preserveAspectRatio="none" aria-hidden="true"><path d="M2 16.0V24.0M7 15.0V25.0M12 12.0V28.0M17 14.0V26.0M22 11.5V28.5M27 12.5V27.5M32 15.0V25.0M37 13.5V26.5M42 15.5V24.5M47 13.5V26.5M52 14.0V26.0M57 12.5V27.5M62 9.5V30.5M67 5.5V34.5M72 11.0V29.0M77 11.0V29.0M82 10.0V30.0M87 10.5V29.5M92 13.5V26.5M97 15.5V24.5M102 14.0V26.0M107 16.5V23.5M112 13.5V26.5M117 14.5V25.5M122 14.0V26.0M127 12.5V27.5M132 10.0V30.0M137 5.0V35.0M142 9.0V31.0M147 6.5V33.5M152 7.5V32.5M157 11.0V29.0M162 12.0V28.0M167 15.0V25.0M172 15.5V24.5M177 15.0V25.0M182 13.0V27.0M187 14.0V26.0M192 14.5V25.5M197 14.5V25.5M202 15.0V25.0M207 14.0V26.0M212 11.0V29.0M217 10.5V29.5M222 13.0V27.0M227 12.0V28.0M232 13.0V27.0M237 12.0V28.0M242 12.5V27.5M247 13.5V26.5M252 8.5V31.5M257 12.0V28.0M262 9.0V31.0M267 6.0V34.0M272 11.0V29.0M277 10.0V30.0M282 14.0V26.0M287 12.5V27.5M292 13.5V26.5M297 15.0V25.0M302 14.0V26.0M307 15.5V24.5M312 13.5V26.5M317 13.0V27.0"/></svg>
+          <ol class="lines">
+            <li><time>00:00</time><p>בוקר טוב, נמשיך מאיפה שעצרנו בשבוע שעבר. היום נדבר על <mark>החוק השני של ניוטון</mark>.</p></li>
+            <li><time>00:19</time><p>הכוח השקול שפועל על גוף שווה למסה שלו כפול התאוצה. זו הנוסחה שתראו בכל מבחן.</p></li>
+            <li><time>01:02</time><p>בואו נבדוק את זה בדוגמה: עגלה של שני קילוגרם, ודוחפים אותה בכוח של עשרה ניוטון.</p></li>
+          </ol>
+        </div>
+        <div class="note" aria-hidden="true">
+          <b>סיכום</b>
+          <ul><li><span dir="ltr">F = m·a</span>: הכוח השקול שווה למסה כפול התאוצה</li><li>דוגמה: 2 ק״ג ו-10 ניוטון, תאוצה של 5</li></ul>
+        </div>
       </figure>
     </section>
 
     <section class="how" id="how">
-      <div class="step"><span class="step-n">1</span><b>מעלים קובץ</b><span class="muted">הקלטה מהטלפון, זום, הרצאה או סרטון. גם קבצים ארוכים.</span></div>
-      <div class="step"><span class="step-n">2</span><b>מקבלים טקסט</b><span class="muted">בעברית, אנגלית, ערבית ועוד. להורדה, להעתקה או ישר למייל.</span></div>
-      <div class="step"><span class="step-n">✨</span><b>מסכמים עם AI</b><span class="muted">סיכום שיעור, נקודות, מושגים או שאלות לחזרה, עם המצגת של המרצה. הקבצים לא נשמרים אצלנו.</span></div>
+      <div class="step"><span class="step-n">01</span><b>מעלים קובץ</b><span class="muted">הקלטה מהטלפון, זום, הרצאה או סרטון. גם קבצים ארוכים.</span></div>
+      <div class="step"><span class="step-n">02</span><b>מקבלים טקסט</b><span class="muted">בעברית, אנגלית, ערבית ועוד. להורדה, להעתקה או ישר למייל.</span></div>
+      <div class="step"><span class="step-n">03</span><b>מסכמים עם AI</b><span class="muted">סיכום שיעור, נקודות, מושגים או שאלות לחזרה, עם המצגת של המרצה. הקבצים לא נשמרים אצלנו.</span></div>
     </section>
 
     <section id="workspace" hidden>
@@ -160,14 +171,14 @@
           <button id="downloadBtn" class="btn btn-primary">הורדה כקובץ TXT</button>
           <button id="emailBtn" class="btn btn-ghost">שליחה למייל שלי</button>
           <button id="copyBtn" class="btn btn-ghost">העתקה</button>
-          <button id="summaryOpen" class="btn btn-ai">✨ סיכום AI</button>
+          <button id="summaryOpen" class="btn btn-ai">סיכום AI</button>
         </div>
         <p id="resultNote" class="notice" hidden></p>
       </div>
 
       <div id="summaryCard" class="card summary-card" hidden>
         <div class="result-head">
-          <h2>✨ סיכום AI</h2>
+          <h2>סיכום AI</h2>
           <span class="muted small" id="summaryFor"></span>
           <button id="summaryClose" class="link-btn" type="button" aria-label="סגירה">סגירה</button>
         </div>
@@ -183,7 +194,7 @@
               <span class="drop-title">צירוף מצגת או חומרים</span>
               <span class="muted small">המרצה שלח מצגת? צרפו אותה והסיכום יהיה מדויק יותר. הקבצים לא נשמרים.</span>
             </label>
-            <p id="sumFilesLocked" class="muted small" hidden>🔒 צירוף מצגות וחומרים: בתוכנית Premium</p>
+            <p id="sumFilesLocked" class="muted small" hidden>צירוף מצגות וחומרים: בתוכנית Premium</p>
             <ul id="sumFileList" class="file-list"></ul>
           </div>
 
@@ -251,13 +262,14 @@
   </main>
 
   <footer class="footer">
-    <div class="wrap muted small footer-inner">
+    <div class="wrap foot">
+      <div class="wordmark">תמלולי</div>
       <div class="contact">
         <span>צריכים עזרה? <button type="button" class="link-btn" data-chat-open>צ׳אט עם נציג</button></span>
         <span>בעיה בחשבון: <a href="mailto:support@reembir.com" class="ltr-inline">support@reembir.com</a></span>
         <span>שאלות כלליות: <a href="mailto:contact@reembir.com" class="ltr-inline">contact@reembir.com</a></span>
       </div>
-      <div>© תמלולי · התמלול נעשה באמצעות OpenAI · התשלום דרך PayPal</div>
+      <div class="legal">© תמלולי · התמלול נעשה באמצעות OpenAI · התשלום דרך PayPal</div>
     </div>
   </footer>
 
