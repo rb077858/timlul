@@ -95,6 +95,24 @@ export async function translateText({ text, to, send, onProgress = () => {}, con
   return { text: rebuild(done.map((t, i) => (t === null ? parts[i] : t))), credits, stopped, translated: done.filter(t => t !== null).length };
 }
 
+/** The language of a text when it can be told from the letters: 'he', 'ar', 'cyrillic', 'zh', 'en' (Latin letters with
+ *  English's little words), or null. Used to default the target and to say "this is already in English". */
+export function detectSource(text) {
+  const t = String(text).replace(/^.{1,40}? · \d{1,2}:\d{2}(?::\d{2})?$/gm, ''); // speaker lines are ours, not the text
+  const count = re => (t.match(re) || []).length;
+  const n = { he: count(/[\u0590-\u05FF]/g), ar: count(/[\u0600-\u06FF]/g), cyrillic: count(/[\u0400-\u04FF]/g), zh: count(/[\u4E00-\u9FFF]/g), latin: count(/[A-Za-z]/g) };
+  const total = Object.values(n).reduce((a, b) => a + b, 0);
+  if (total < 10) return null;
+  const [top, size] = Object.entries(n).sort((a, b) => b[1] - a[1])[0];
+  if (size / total < 0.7) return null;
+  if (top !== 'latin') return top;
+  const words = t.toLowerCase().match(/[a-z']+/g) || [];
+  const little = words.filter(w => ['the', 'and', 'of', 'to', 'is', 'in', 'that', 'it', 'for', 'you', 'with', 'this', 'are', 'was'].includes(w)).length;
+  return little / words.length > 0.12 ? 'en' : null;
+}
+const SAME = { he: 'he', ar: 'ar', en: 'en' }; // detected script -> the target code it equals (Cyrillic could be ru or uk)
+export const sameLanguage = (source, to) => !!source && (SAME[source] === to || (source === 'cyrillic' && (to === 'ru' || to === 'uk')) || (source === 'zh' && to === 'zh'));
+
 // ---------------------------------------------------------------- the card
 
 export function initTranslate(d) {
@@ -110,6 +128,11 @@ export function initTranslate(d) {
     for (const [code, label] of Object.entries(names())) select.append(new Option(label, code));
     select.value = 'en';
   }
+  // The target is not the language the text is in already: a Hebrew text goes to English, anything else to Hebrew.
+  function pickDefault() {
+    const src = detectSource(source());
+    select.value = src === 'he' ? 'en' : src ? 'he' : select.value;
+  }
   function updateCost() {
     const n = source().length;
     const free = d.me()?.unlimited;
@@ -118,6 +141,7 @@ export function initTranslate(d) {
   function open() {
     if (d.me()?.features && d.me().features.translate === false) return d.toast('התרגום לא כלול בתוכנית שלך');
     fillLanguages();
+    pickDefault();
     $('trFor').textContent = nameOf();
     $('trError').hidden = true;
     $('trProgress').hidden = true;
@@ -136,6 +160,11 @@ export function initTranslate(d) {
     const me = d.me();
     const need = estimateCredits(text.length);
     $('trError').hidden = true;
+    if (sameLanguage(detectSource(text), to)) {
+      $('trError').textContent = `התמלול כבר ב${names()[to]}, אז אין מה לתרגם. בחרו שפה אחרת בשדה "לתרגם ל".`;
+      $('trError').hidden = false;
+      return;
+    }
     if (me && !me.unlimited && need > me.remaining + 0.01) {
       $('trError').textContent = `התרגום צריך בערך ${need} דקות מהמכסה, ונותרו לך ${Math.floor(me.remaining)}.`;
       $('trError').hidden = false;

@@ -74,7 +74,7 @@ test('export: the model, plain text, and a valid Word file', async () => {
   assert.deepEqual(sum.blocks.map(b => b.t), ['h', 'li', 'li', 'p']);
 });
 
-import { splitForTranslation, batchParts, translateText, estimateCredits } from '../public/translate.js';
+import { splitForTranslation, batchParts, translateText, estimateCredits, detectSource, sameLanguage } from '../public/translate.js';
 
 test('translation: the parts keep the speakers and times, long parts are cut and joined, batches stay small', async () => {
   const text = 'דובר 1 · 00:00\nשלום לכולם\n\nדובר 2 · 00:05\nמה נשמע\n\nדנה · 00:09\nטוב';
@@ -106,4 +106,15 @@ test('translation: the parts keep the speakers and times, long parts are cut and
   const f = await translateText({ text: many.join('\n'), to: 'en', concurrency: 1, send: async items => { if (++n > 1) throw new Error('boom'); return { items: items.map(() => 'X'), credits: 1 }; } });
   assert.equal(f.stopped.message, 'boom');
   assert.equal(f.translated, 2);
+});
+
+test('translation: a text that is already in the target language is noticed before anything is paid', () => {
+  const en = 'Speaker 1 · 00:00\nHello everyone, this is the lesson and we are going to talk about the history of it.';
+  assert.equal(detectSource(en), 'en');
+  assert.equal(detectSource('שלום לכולם, היום נדבר על ההיסטוריה של הכלכלה. Speaker'), 'he');
+  assert.equal(detectSource('Привет всем, сегодня мы поговорим об истории'), 'cyrillic');
+  assert.equal(detectSource('hola a todos hoy hablaremos de la historia de la economia moderna'), null, 'Latin letters that are not English: not sure');
+  assert.equal(detectSource('12 34'), null);
+  assert.ok(sameLanguage('en', 'en') && sameLanguage('he', 'he') && sameLanguage('cyrillic', 'ru'));
+  assert.ok(!sameLanguage('en', 'he') && !sameLanguage(null, 'en') && !sameLanguage('he', 'en'));
 });
