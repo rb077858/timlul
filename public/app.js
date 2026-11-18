@@ -476,8 +476,9 @@ async function start() {
     await new Promise(r => setTimeout(r, 30));
     let samples;
     try {
-      samples = await decodeToMono(currentFile);
+      samples = await decodeToMono(currentFile, { onStatus: text => setProgress(3, text) });
     } catch (e) {
+      console.error('decoding failed:', e);
       throw new Error(e instanceof RangeError
         ? 'הקובץ גדול מדי לעיבוד במכשיר הזה. נסו קובץ אודיו (MP3/M4A) או מחשב.'
         : 'לא הצלחנו לקרוא את הקובץ. ודאו שזה קובץ אודיו או וידאו תקין, או המירו אותו ל-MP3.');

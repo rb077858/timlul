@@ -5,7 +5,20 @@ export const SAMPLE_RATE = 16000;
 export const CHUNK_SECONDS = 300;
 const SEARCH_SECONDS = 15; // look this far back for a quiet spot to cut at
 
-export async function decodeToMono(file) {
+// First the browser's own decoder (fast). What it can't read goes to ffmpeg in WebAssembly (ffmpeg-fallback.js), which
+// reads practically every audio and video format. Running out of memory is not a format problem: that error goes on.
+export async function decodeToMono(file, { onStatus } = {}) {
+  try {
+    return await decodeNative(file);
+  } catch (e) {
+    if (e instanceof RangeError) throw e;
+    console.warn('the browser could not decode the file, trying ffmpeg:', e);
+    const { decodeWithFfmpeg } = await import('./ffmpeg-fallback.js');
+    return decodeWithFfmpeg(file, onStatus);
+  }
+}
+
+async function decodeNative(file) {
   const data = await file.arrayBuffer();
   const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!Ctx) throw new Error('הדפדפן הזה לא תומך בעיבוד שמע. נסה Chrome, Edge, Firefox או Safari עדכני.');
