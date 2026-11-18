@@ -113,6 +113,14 @@
           <span class="muted small">MP3, M4A, WAV, MP4, MOV, WEBM ועוד</span>
         </label>
         <div id="fileInfo" class="file-info" hidden></div>
+        <div id="ytBox" class="yt" hidden>
+          <div class="or"><span>או סרטון מיוטיוב</span></div>
+          <div class="yt-row">
+            <input id="ytUrl" type="url" dir="ltr" placeholder="https://www.youtube.com/watch?v=…" aria-label="קישור לסרטון ביוטיוב" autocomplete="off">
+            <button id="ytBtn" class="btn btn-ghost" type="button">הבאת הסרטון</button>
+          </div>
+          <p class="muted small yt-note">מביאים את הקול של הסרטון ומתמללים אותו כמו קובץ. הייבוא עצמו בחינם, והתמלול יורד מהדקות כרגיל. עד שעתיים.</p>
+        </div>
 
         <h2>2. הגדרות</h2>
         <div class="options">
@@ -133,6 +141,13 @@
               </span>
             </label>
           </fieldset>
+          <label class="check" id="diarizeRow">
+            <input type="checkbox" id="diarize">
+            <span class="check-body">
+              <b>זיהוי דוברים</b>
+              <span class="muted small" id="diarizeNote">התמלול יחולק לפי מי דיבר, עם שעות. דקה = 2 דקות מהמכסה</span>
+            </span>
+          </label>
           <div class="row">
             <label class="field">
               <span>שפת ההקלטה</span>
@@ -166,9 +181,20 @@
           <h2>התמלול</h2>
           <span class="muted small" id="resultMeta"></span>
         </div>
+        <div id="speakersBox" class="speakers" hidden>
+          <div class="sum-label">שמות הדוברים <span class="muted small">(אפשר לכתוב שם אמיתי במקום "דובר 1")</span></div>
+          <div id="speakersList" class="speakers-list"></div>
+        </div>
         <textarea id="resultText" rows="14" dir="auto"></textarea>
         <div class="actions">
-          <button id="downloadBtn" class="btn btn-primary">הורדה כקובץ TXT</button>
+          <div class="export" id="exportMenu">
+            <button class="btn btn-primary" type="button" data-export-toggle aria-haspopup="true" aria-expanded="false">הורדה ▾</button>
+            <div class="export-list" role="menu" hidden>
+              <button type="button" role="menuitem" data-format="docx"><b>Word</b><span class="muted small">מסמך מעוצב, בעברית מימין לשמאל</span></button>
+              <button type="button" role="menuitem" data-format="pdf"><b>PDF</b><span class="muted small">נפתח חלון הדפסה, שם בוחרים "שמירה כ-PDF"</span></button>
+              <button type="button" role="menuitem" data-format="txt"><b>טקסט</b><span class="muted small">קובץ TXT פשוט</span></button>
+            </div>
+          </div>
           <button id="emailBtn" class="btn btn-ghost">שליחה למייל שלי</button>
           <button id="copyBtn" class="btn btn-ghost">העתקה</button>
           <button id="summaryOpen" class="btn btn-ai">סיכום AI</button>
@@ -217,7 +243,14 @@
           <div class="muted small" id="summaryMeta"></div>
           <div id="summaryText" class="summary-text" dir="auto"></div>
           <div class="actions">
-            <button id="sumDownload" class="btn btn-primary">הורדה כקובץ TXT</button>
+            <div class="export" id="sumExport">
+              <button class="btn btn-primary" type="button" data-export-toggle aria-haspopup="true" aria-expanded="false">הורדה ▾</button>
+              <div class="export-list" role="menu" hidden>
+                <button type="button" role="menuitem" data-format="docx"><b>Word</b><span class="muted small">מסמך מעוצב, בעברית מימין לשמאל</span></button>
+                <button type="button" role="menuitem" data-format="pdf"><b>PDF</b><span class="muted small">נפתח חלון הדפסה, שם בוחרים "שמירה כ-PDF"</span></button>
+                <button type="button" role="menuitem" data-format="txt"><b>טקסט</b><span class="muted small">קובץ TXT פשוט</span></button>
+              </div>
+            </div>
             <button id="sumEmail" class="btn btn-ghost">שליחה למייל שלי</button>
             <button id="sumCopy" class="btn btn-ghost">העתקה</button>
           </div>

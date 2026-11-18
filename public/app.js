@@ -1,5 +1,7 @@
 import { decodeToMono, planChunks, encodeWav } from './audio.js';
 import { initSummary } from './summary.js';
+import { buildDoc, exportDoc, speakersOf, SPEAKER_COLORS } from './export.js';
+import { transcribeBySpeaker } from './speakers.js';
 
 const $ = id => document.getElementById(id);
 const CONCURRENCY = 3;
@@ -218,6 +220,15 @@ function applyFeatures() {
   $('strongNote').textContent = canStrong
     ? `המודל החזק ביותר. דקה = ${config.strongWeight} דקות מהמכסה`
     : 'זמין בתוכניות בתשלום';
+  const canDiarize = !!me?.features?.diarize;
+  $('diarize').disabled = !canDiarize;
+  $('diarizeRow').classList.toggle('locked', !canDiarize);
+  if (!canDiarize) $('diarize').checked = false;
+  $('diarizeNote').textContent = canDiarize
+    ? `התמלול יחולק לפי מי דיבר, עם שעות. דקה = ${config.strongWeight} דקות מהמכסה`
+    : 'זמין בתוכניות בתשלום';
+  syncModelChoice();
+  $('ytBox').hidden = !config?.youtube;
   $('emailBtn').textContent = me?.features?.email ? 'שליחה למייל שלי' : 'שליחה למייל (בתוכניות בתשלום)';
 }
 
@@ -397,8 +408,12 @@ function bindWorkspace() {
   });
 
   $('startBtn').onclick = start;
-  initSummary({ $, me: () => me, config: () => config, api, toast, download, el, fmtDate, history: loadHistory, refreshMe, renderQuota });
-  $('downloadBtn').onclick = () => download($('resultText').value, $('resultText').dataset.name || 'transcript');
+  initSummary({ $, me: () => me, config: () => config, api, toast, bindExport, el, fmtDate, history: loadHistory, refreshMe, renderQuota });
+  bindExport($('exportMenu'), () => buildDoc('transcript', $('resultText').value, { title: $('resultText').dataset.name || 'תמלול', seconds: Number($('resultText').dataset.seconds) || 0 }));
+  $('resultText').addEventListener('change', renderSpeakers);
+  $('diarize').onchange = syncModelChoice;
+  $('ytBtn').onclick = fetchYoutube;
+  $('ytUrl').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fetchYoutube(); } });
   $('copyBtn').onclick = async () => {
     try { await navigator.clipboard.writeText($('resultText').value); toast('הועתק'); }
     catch { $('resultText').select(); document.execCommand('copy'); toast('הועתק'); }
@@ -447,7 +462,8 @@ async function start() {
   try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* not supported */ }
 
   try {
-    const kind = document.querySelector('input[name="model"]:checked').value;
+    const bySpeaker = $('diarize').checked && !$('diarize').disabled;
+    const kind = bySpeaker ? 'strong' : document.querySelector('input[name="model"]:checked').value;
     const lang = $('lang').value;
     const hint = $('hint').value.trim();
     const weight = kind === 'strong' ? config.strongWeight : 1;
@@ -475,10 +491,24 @@ async function start() {
         (me.packs?.allowed ? 'לקנות חבילת דקות נוספות למטה.' : 'לשדרג תוכנית למטה.'));
     }
 
+    const total = chunks.length;
+    if (bySpeaker) {
+      setProgress(5, `מתמלל ומזהה דוברים… 0 מתוך ${total} חלקים`);
+      const r = await transcribeBySpeaker({
+        chunks, samples, concurrency: CONCURRENCY,
+        upload: (blob, refs) => uploadBySpeaker(blob, refs, lang),
+        onProgress: (n, of) => setProgress(5 + (n / of) * 95, `מתמלל ומזהה דוברים… ${n} מתוך ${of} חלקים`),
+      });
+      const name = currentFile.name.replace(/\.[^.]+$/, '');
+      if (r.text) showResult(r.text, name, totalSeconds, !!r.stopped, r.inconsistent ? 'ההקלטה ארוכה, ולכן ייתכן שדובר אחד קיבל כמה מספרים בחלקים שונים. אפשר לתת לאותם דוברים את אותו שם בשמות הדוברים למעלה.' : '');
+      if (r.stopped) throw r.stopped;
+      setProgress(100, 'הסתיים ✓');
+      return;
+    }
+
     const texts = new Array(chunks.length).fill(null);
     let done = 0;
     let stopped = null;
-    const total = chunks.length;
     setProgress(5, `מתמלל… 0 מתוך ${total} חלקים`);
 
     let next = 0;
@@ -514,6 +544,28 @@ async function start() {
   }
 }
 
+// One piece by speaker: a form with the audio and the clips of the speakers heard so far.
+async function uploadBySpeaker(blob, refs, lang) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const form = new FormData();
+      form.set('file', blob, 'audio.wav');
+      for (const r of refs) { form.append('ref_name', r.name); form.append('ref', r.blob, 'ref.wav'); }
+      return await api('/api/transcribe?' + new URLSearchParams({ diarize: '1', lang }), { method: 'POST', body: form });
+    } catch (e) {
+      const retryable = !e.status || e.status >= 500 || e.status === 429;
+      if (!retryable || attempt >= 2) throw e;
+      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+    }
+  }
+}
+
+// With "by speaker" the model is fixed (the accurate one), so the two cards are put aside.
+function syncModelChoice() {
+  const on = $('diarize').checked;
+  document.querySelector('.models').classList.toggle('off', on);
+}
+
 async function uploadChunk(blob, { kind, lang, hint }) {
   const params = new URLSearchParams({ model: kind, lang });
   if (hint) params.set('prompt', hint);
@@ -533,28 +585,102 @@ async function uploadChunk(blob, { kind, lang, hint }) {
   }
 }
 
-function showResult(text, name, seconds, partial) {
+function showResult(text, name, seconds, partial, extraNote = '') {
   $('summaryCard').hidden = true;
   $('resultText').value = text;
   $('resultText').dataset.name = name;
+  $('resultText').dataset.seconds = String(Math.round(seconds || 0));
   const mins = Math.round(seconds / 60);
   $('resultMeta').textContent = `${name} · ${mins ? mins + ' דקות' : 'פחות מדקה'}`;
-  $('resultNote').hidden = !partial;
-  $('resultNote').textContent = partial ? 'התמלול חלקי: חלק מהקובץ לא תומלל (ראו את השגיאה למעלה).' : '';
+  const note = [partial ? 'התמלול חלקי: חלק מהקובץ לא תומלל (ראו את השגיאה למעלה).' : '', extraNote].filter(Boolean).join(' ');
+  $('resultNote').hidden = !note;
+  $('resultNote').textContent = note;
+  renderSpeakers();
   $('resultCard').hidden = false;
   $('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  saveHistory(name, text);
+  saveHistory(name, text, seconds);
 }
 
-function download(text, name) {
-  const blob = new Blob(['﻿' + text], { type: 'text/plain;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name + '.txt';
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+// The "הורדה" menu: Word, PDF or text, made from what is in the box now (edits included).
+function bindExport(menu, getDoc) {
+  const toggle = menu.querySelector('[data-export-toggle]');
+  const list = menu.querySelector('.export-list');
+  const close = () => { list.hidden = true; toggle.setAttribute('aria-expanded', 'false'); };
+  toggle.onclick = e => { e.stopPropagation(); list.hidden = !list.hidden; toggle.setAttribute('aria-expanded', String(!list.hidden)); };
+  document.addEventListener('click', e => { if (!menu.contains(e.target)) close(); });
+  menu.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); toggle.focus(); } });
+  list.querySelectorAll('[data-format]').forEach(b => {
+    b.onclick = async () => {
+      close();
+      const doc = getDoc();
+      if (!doc.blocks.length) return toast('אין מה להוריד');
+      try { await exportDoc(doc, b.dataset.format); } catch (e) { toast('לא הצלחנו ליצור את הקובץ'); console.error(e); }
+    };
+  });
+}
+
+// Names for the speakers: "דובר 1" becomes whatever they are called, in the text itself (so every export has it).
+function renderSpeakers() {
+  const speakers = speakersOf($('resultText').value);
+  $('speakersBox').hidden = !speakers.length;
+  const list = $('speakersList');
+  list.textContent = '';
+  speakers.forEach((name, i) => {
+    const label = el('label', '', '');
+    const dot = document.createElement('i');
+    dot.style.setProperty('--c', '#' + SPEAKER_COLORS[i % SPEAKER_COLORS.length]);
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = name; input.maxLength = 40; input.setAttribute('aria-label', 'שם ל' + name);
+    input.onchange = () => {
+      const next = input.value.replace(/\s*·\s*/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!next || next === name) { input.value = name; return; }
+      const box = $('resultText');
+      box.value = box.value.replace(/^(.{1,40}?) · (\d{1,2}:\d{2}(?::\d{2})?)$/gm, (m, who, t) => (who === name ? `${next} · ${t}` : m));
+      renderSpeakers();
+    };
+    label.append(dot, input);
+    list.append(label);
+  });
+}
+
+// A YouTube link: the audio comes from the site's download service, and goes on like a chosen file.
+async function fetchYoutube() {
+  const link = $('ytUrl').value.trim();
+  if (!link || busy) return;
+  $('ytBtn').disabled = true;
+  $('workError').hidden = true;
+  setProgress(5, 'מביא את הסרטון מיוטיוב… (תלוי באורך, עד כמה דקות)');
+  try {
+    const res = await fetch('/api/youtube?url=' + encodeURIComponent(link), { headers: { Authorization: 'Bearer ' + (await auth.getToken()) } });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) auth.login();
+      throw new Error(data.message || 'לא הצלחנו להביא את הסרטון');
+    }
+    const title = (() => { try { return decodeURIComponent(res.headers.get('x-title') || ''); } catch { return ''; } })() || 'סרטון מיוטיוב';
+    const parts = [];
+    let got = 0;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.byteLength;
+      setProgress(5 + Math.min(90, got / 1048576), `מוריד… ${(got / 1048576).toFixed(1)} MB`);
+    }
+    const type = res.headers.get('content-type') || 'audio/mp4';
+    const ext = /webm/.test(type) ? 'webm' : /ogg/.test(type) ? 'ogg' : /mpeg/.test(type) ? 'mp3' : 'm4a';
+    const file = new File(parts, title.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 100) + '.' + ext, { type });
+    pickFile(file);
+    $('fileInfo').textContent = `${title} · ${(file.size / 1048576).toFixed(1)} MB · מיוטיוב`;
+    $('progress').hidden = true;
+    $('ytUrl').value = '';
+  } catch (e) {
+    $('progress').hidden = true;
+    showError(e.message || 'לא הצלחנו להביא את הסרטון');
+  } finally {
+    $('ytBtn').disabled = false;
+  }
 }
 
 async function sendEmail() {
@@ -703,9 +829,9 @@ function loadHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { return []; }
 }
 
-function saveHistory(name, text) {
+function saveHistory(name, text, seconds) {
   const list = loadHistory().filter(h => h.text !== text);
-  list.unshift({ name, text: text.slice(0, 300000), date: Date.now() });
+  list.unshift({ name, text: text.slice(0, 300000), date: Date.now(), seconds: Math.round(seconds || 0) });
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 5))); } catch { /* storage full or blocked */ }
   renderHistory();
 }
@@ -726,6 +852,8 @@ function renderHistory() {
       $('summaryCard').hidden = true;
       $('resultText').value = h.text;
       $('resultText').dataset.name = h.name;
+      $('resultText').dataset.seconds = String(h.seconds || 0);
+      renderSpeakers();
       $('resultMeta').textContent = h.name;
       $('resultNote').hidden = true;
       $('resultCard').hidden = false;

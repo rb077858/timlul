@@ -67,6 +67,22 @@ async function mock(req) {
     return Response.json({ status: 'completed', output: [{ type: 'reasoning' }, { type: 'message', content: [{ type: 'output_text', text: '## סיכום\n- נקודה ראשונה' }] }],
       usage: { input_tokens: 3000, output_tokens: 1000 } });
   }
+  if (url.host === 'yt.example.com') {
+    ytCalls.push({ url: req.url, auth });
+    if (auth !== 'Bearer yt-secret') return Response.json({ error: 'unauthorized' }, { status: 401 });
+    const v = url.searchParams.get('v');
+    if (v === 'LONGLONGLON') return Response.json({ error: 'too_long' }, { status: 422 });
+    return new Response(new Uint8Array([1, 2, 3, 4, 5]), { headers: { 'content-type': 'audio/mp4', 'x-title': encodeURIComponent('שיעור ביוטיוב'), 'x-duration': '95' } });
+  }
+  if (url.host === 'api.openai.com' && url.pathname === '/v1/audio/transcriptions' && (req.headers.get('content-type') || '').includes('multipart') && diarizeMode) {
+    const form = await req.formData();
+    diarizeCalls.push({ fields: [...form.keys()], model: form.get('model'), format: form.get('response_format'), names: form.getAll('known_speaker_names[]'), refs: form.getAll('known_speaker_references[]'), language: form.get('language') });
+    if (diarizeMode === 'refuse-known' && form.getAll('known_speaker_names[]').length) return Response.json({ error: { message: 'bad known speakers' } }, { status: 400 });
+    return Response.json({ text: 'שלום מה נשמע טוב תודה', segments: [
+      { type: 'transcript.text.segment', speaker: 'A', start: 0, end: 4, text: ' שלום מה נשמע ' },
+      { type: 'transcript.text.segment', speaker: 'B', start: 4, end: 6, text: 'טוב תודה' },
+    ] });
+  }
   if (url.host === 'api.openai.com') {
     const body = new Uint8Array(await req.arrayBuffer());
     calls.at(-1).body = body;
@@ -84,6 +100,9 @@ async function mock(req) {
 }
 
 let fileN = 0;
+const ytCalls = [];
+const diarizeCalls = [];
+let diarizeMode = null;
 const deletedFiles = [];
 const summaryCalls = [];
 let mf;
@@ -95,6 +114,7 @@ before(async () => {
     durableObjects: { STORE: { className: 'Store', useSQLite: true } },
     bindings: {
       OPENAI_API_KEY: 'sk-test', ADMIN_EMAILS: 'boss@example.com', OPENAI_ADMIN_KEY: 'sk-admin',
+      YT_AUDIO_URL: 'https://yt.example.com/', YT_AUDIO_TOKEN: 'yt-secret',
     },
     serviceBindings: { ASSETS: () => new Response('asset') },
     outboundService: mock,
@@ -148,7 +168,7 @@ test('free plan: quota, fast model only, streaming to OpenAI', async () => {
   let m = await me(user);
   assert.equal(m.plan.key, 'free');
   assert.equal(m.remaining, 10);
-  assert.deepEqual(m.features, { strong: false, email: false });
+  assert.deepEqual(m.features, { strong: false, email: false, diarize: false });
 
   let res = await transcribe(user, 60);
   assert.equal(res.status, 200);
@@ -189,7 +209,7 @@ test('the plan, its minutes and its features come from reem.bi', async () => {
   assert.equal(m.plan.key, 'pro');
   assert.equal(m.plan.name, 'Pro');
   assert.equal(m.plan.credits, 700, 'minutes from the plan JSON');
-  assert.deepEqual(m.features, { strong: true, email: true }, 'defaults for pro');
+  assert.deepEqual(m.features, { strong: true, email: true, diarize: true }, 'defaults for pro');
   assert.equal(m.planExpiresAt, exp * 1000);
   assert.equal(m.subscription.status, 'ACTIVE');
   assert.equal((await transcribe('e@example.com', 60, 'strong')).status, 200);
@@ -201,7 +221,7 @@ test('the plan, its minutes and its features come from reem.bi', async () => {
   dash['g@example.com'] = { override: { minutes: 50, email: true } };
   m = await me('g@example.com');
   assert.equal(m.plan.credits, 50, 'personal permissions');
-  assert.deepEqual(m.features, { strong: false, email: true });
+  assert.deepEqual(m.features, { strong: false, email: true, diarize: false });
 
   // After paying, the site asks with ?fresh=1 and sees the new plan right away.
   dash['g@example.com'] = { plan: 'timlul:basic' };
@@ -215,7 +235,7 @@ test('unlimited: the hidden plan or a personal permission', async () => {
   assert.equal(m.unlimited, true);
   assert.equal(m.plan.name, 'ללא הגבלה');
   assert.equal(m.remaining, null);
-  assert.deepEqual(m.features, { strong: true, email: true });
+  assert.deepEqual(m.features, { strong: true, email: true, diarize: true });
   for (let i = 0; i < 4; i++) assert.equal((await transcribe('vip@example.com', 5 * 60, 'strong')).status, 200);
   assert.equal((await me('vip@example.com')).used, 40, 'usage is still recorded for the cost stats');
 
@@ -324,7 +344,7 @@ test('no free plan: a new user has only the welcome gift, fast model, no email',
   assert.equal(m.plan.name, 'ללא מנוי');
   assert.equal(m.plan.credits, 0);
   assert.equal(m.remaining, 10);
-  assert.deepEqual(m.features, { strong: false, email: false });
+  assert.deepEqual(m.features, { strong: false, email: false, diarize: false });
   assert.equal((await transcribe(user, 60, 'strong')).status, 403, 'fast model only');
   assert.equal((await transcribe(user, 9 * 60)).status, 200);
   m = await me(user);
@@ -553,4 +573,92 @@ test('the unlimited plan summarizes several transcripts together, with files', a
   assert.deepEqual([m.summary.level, m.summary.texts, m.summary.files, m.summary.pages], [3, 5, 5, 100]);
   assert.equal((await post('/api/summarize', who, { style: 'terms', texts: [...T, ...T, ...T, ...T, ...T] })).status, 200);
   assert.equal((await post('/api/summarize', who, { style: 'terms', texts: [...T, ...T, ...T, ...T, ...T, ...T] })).status, 403, 'five at most');
+});
+
+const diarizeForm = async (seconds, refs = [], refSeconds = 4) => {
+  const f = new FormData();
+  f.set('file', new Blob([await wav(seconds)], { type: 'audio/wav' }), 'a.wav');
+  for (let i = 0; i < refs.length; i++) { f.append('ref_name', refs[i]); f.append('ref', new Blob([await wav(refSeconds)], { type: 'audio/wav' }), 'r.wav'); }
+  return f;
+};
+const diarize = async (email, form) => {
+  const req = new Request(BASE + '/api/transcribe?diarize=1&lang=he', { method: 'POST', body: form });
+  const body = new Uint8Array(await req.arrayBuffer());
+  return mf.dispatchFetch(BASE + '/api/transcribe?diarize=1&lang=he', { method: 'POST', headers: { ...as(email), 'content-type': req.headers.get('content-type'), 'content-length': String(body.length) }, body });
+};
+
+test('by speaker: segments with speakers, charged like the accurate model, only for plans that have it', async () => {
+  diarizeMode = 'ok';
+  dash['d1@example.com'] = { plan: 'timlul:basic' };
+  const res = await diarize('d1@example.com', await diarizeForm(60));
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.deepEqual(data.segments.map(x => [x.speaker, x.text]), [['A', 'שלום מה נשמע'], ['B', 'טוב תודה']]);
+  const c = diarizeCalls.at(-1);
+  assert.equal(c.model, 'gpt-4o-transcribe-diarize');
+  assert.equal(c.format, 'diarized_json');
+  assert.ok(c.fields.includes('chunking_strategy'));
+  assert.equal(c.language, 'he');
+  assert.equal((await me('d1@example.com', true)).used, 2, 'a minute costs two, like the accurate model');
+  // the free plan (no accurate model) has no speakers either
+  const denied = await diarize('a@example.com', await diarizeForm(30));
+  assert.equal(denied.status, 403);
+  // unless the plan's JSON says so
+  dash['d2@example.com'] = { plan: 'timlul:free', override: { diarize: true, minutes: 20 } };
+  assert.equal((await diarize('d2@example.com', await diarizeForm(30))).status, 200);
+  dash['d3@example.com'] = { plan: 'timlul:basic', override: { diarize: false } };
+  assert.equal((await diarize('d3@example.com', await diarizeForm(30))).status, 403, 'a plan can switch it off');
+});
+
+test('by speaker: clips of known speakers are passed on, and dropped when OpenAI refuses them', async () => {
+  dash['d4@example.com'] = { plan: 'timlul:basic' };
+  diarizeMode = 'ok';
+  assert.equal((await diarize('d4@example.com', await diarizeForm(30, ['spk1', 'spk2']))).status, 200);
+  let c = diarizeCalls.at(-1);
+  assert.deepEqual(c.names, ['spk1', 'spk2']);
+  assert.match(c.refs[0], /^data:audio\/wav;base64,UklGR/);
+  // a clip that is too long is ignored
+  await diarize('d4@example.com', await diarizeForm(30, ['spk1'], 20));
+  assert.deepEqual(diarizeCalls.at(-1).names, []);
+  // refused: tried again without them
+  diarizeMode = 'refuse-known';
+  const n = diarizeCalls.length;
+  const res = await diarize('d4@example.com', await diarizeForm(30, ['spk1']));
+  assert.equal(res.status, 200);
+  assert.equal(diarizeCalls.length, n + 2);
+  assert.equal((await res.json()).usedKnown, false);
+  diarizeMode = null;
+});
+
+test('YouTube: a link is turned into audio by the download service, with the quota checked first', async () => {
+  const c = await (await mf.dispatchFetch(BASE + '/api/config')).json();
+  assert.equal(c.youtube, true);
+  const yt = (email, link) => mf.dispatchFetch(BASE + '/api/youtube?url=' + encodeURIComponent(link), { headers: as(email) });
+  dash['y1@example.com'] = { plan: 'timlul:basic' };
+  let res = await yt('y1@example.com', 'https://youtu.be/dQw4w9WgXcQ?t=5');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-duration'), '95');
+  assert.equal(decodeURIComponent(res.headers.get('x-title')), 'שיעור ביוטיוב');
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [1, 2, 3, 4, 5]);
+  const call = ytCalls.at(-1);
+  assert.equal(call.auth, 'Bearer yt-secret');
+  assert.equal(new URL(call.url).searchParams.get('v'), 'dQw4w9WgXcQ');
+  assert.equal(new URL(call.url).searchParams.get('max'), String(180 * 60), 'the longest video the user could still transcribe');
+  for (const link of ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=x', 'https://m.youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/live/dQw4w9WgXcQ']) {
+    assert.equal((await yt('y1@example.com', link)).status, 200, link);
+  }
+  for (const bad of ['https://evil.com/watch?v=dQw4w9WgXcQ', 'https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ', 'not a link', 'https://www.youtube.com/watch?v=short', 'file:///etc/passwd']) {
+    assert.equal((await yt('y1@example.com', bad)).status, 400, bad);
+  }
+  const n = ytCalls.length;
+  const long = await yt('y1@example.com', 'https://youtu.be/LONGLONGLON');
+  assert.equal(long.status, 422);
+  assert.match((await long.json()).message, /ארוך/);
+  assert.equal(ytCalls.length, n + 1);
+  // no minutes, nothing is fetched
+  dash['y2@example.com'] = { plan: null };
+  const none = await yt('y2@example.com', 'https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(none.status, 402);
+  assert.equal(ytCalls.length, n + 1);
+  assert.equal((await mf.dispatchFetch(BASE + '/api/youtube?url=x')).status, 401);
 });

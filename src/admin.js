@@ -6,6 +6,7 @@
 // קרדיטים"); what was spent since is subtracted. Spending comes from OpenAI's Costs API when an
 // admin key is set (OPENAI_ADMIN_KEY, the whole organization), otherwise it is estimated from the
 // minutes transcribed here (COST_PER_MINUTE).
+import { youtubeConfigured } from './youtube.js';
 import { COST_PER_MINUTE, modelIds } from './plans.js';
 
 const DAY = 86400000;
@@ -173,7 +174,8 @@ export async function adminManifest(env, store) {
         label: 'OPENAI_ADMIN_KEY', ok: !costs?.error,
         detail: real ? 'העלויות מגיעות מ-OpenAI' : costs?.error ? `לא עובד: ${costs.error}` : 'לא חובה. בלעדיו העלויות הן הערכה לפי הדקות. יוצרים ב-OpenAI ← Settings ← Admin keys',
       },
-      { label: 'מודלים', ok: true, detail: `מהיר: ${ids.fast} · מדויק: ${ids.strong}` },
+      { label: 'מודלים', ok: true, detail: `מהיר: ${ids.fast} · מדויק: ${ids.strong} · דוברים: ${ids.diarize}` },
+      { label: 'יבוא מיוטיוב', ok: true, detail: youtubeConfigured(env) ? 'מחובר לשירות ההורדה' : 'כבוי. לא חובה: דורש שירות הורדה (YT_AUDIO_URL ו-YT_AUDIO_TOKEN, ראו tools/youtube-audio)' },
     ],
     actions: [
       {

@@ -1,5 +1,6 @@
 import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, modelIds } from './plans.js';
-import { transcribeWav, parseWavHeader, MAX_UPLOAD_BYTES } from './openai.js';
+import { transcribeWav, diarizeWav, parseWavHeader, MAX_UPLOAD_BYTES, MAX_REFS, REF_MIN_SECONDS, REF_MAX_SECONDS } from './openai.js';
+import { youtubeAudio, youtubeConfigured } from './youtube.js';
 import { sendTranscriptEmail } from './mail.js';
 import { authenticate, userPlan, clientId } from './sso.js';
 import { adminManifest, adminAction } from './admin.js';
@@ -55,6 +56,7 @@ async function route(request, env, url) {
 
   if (path === '/api/me' && method === 'GET') return json(await accountState(env, store, user));
   if (path === '/api/transcribe' && method === 'POST') return transcribe(request, env, store, user, url);
+  if (path === '/api/youtube' && method === 'GET') return youtubeFetch(request, env, store, user, url);
   if (path === '/api/email' && method === 'POST') return email(request, env, store, user);
   if (path === '/api/summary/file' && method === 'POST') {
     const ent = await entitlement(env, store, user);
@@ -117,6 +119,8 @@ function publicConfig(env) {
     ssoClientId: clientId(env),
     strongWeight: STRONG_WEIGHT,
     maxUploadBytes: MAX_UPLOAD_BYTES,
+    // A link to a YouTube video can be transcribed when a download service is connected (src/youtube.js).
+    youtube: youtubeConfigured(env),
     // Fallbacks for plans whose JSON in the dashboard doesn't set minutes/strong/email.
     planDefaults: PLAN_DEFAULTS,
     // AI summary styles: { id: label }, and how big a file may be.
@@ -156,7 +160,7 @@ async function accountState(env, store, user) {
     user: { email: user.email, name: user.name },
     plan: { key: ent.plan.key, name: ent.plan.name, credits: unlimited ? null : ent.plan.credits },
     unlimited,
-    features: { strong: !!ent.plan.strong, email: !!ent.plan.email },
+    features: { strong: !!ent.plan.strong, email: !!ent.plan.email, diarize: !!ent.plan.diarize },
     // AI summaries: what this plan may do, and whether the one trial summary is still there.
     summary: (l => {
       // addons: what is left of the summaries / attachable files the site gave this user on top of the plan.
@@ -186,6 +190,7 @@ async function accountState(env, store, user) {
 
 async function transcribe(request, env, store, user, url) {
   if (!env.OPENAI_API_KEY) return json({ error: 'not_configured', message: 'מפתח OpenAI לא הוגדר' }, 500);
+  if (url.searchParams.get('diarize') === '1') return transcribeBySpeaker(request, env, store, user, url);
 
   const kind = url.searchParams.get('model') === 'strong' ? 'strong' : 'fast';
   const lang = /^[a-z]{2}$/.test(url.searchParams.get('lang') || '') ? url.searchParams.get('lang') : '';
@@ -232,6 +237,68 @@ async function transcribe(request, env, store, user, url) {
     console.error('transcription failed', e.message);
     return json({ error: 'transcription_failed', message: e.message }, 502);
   }
+}
+
+// By speaker: the browser sends a form (the audio piece, and clips of speakers heard before). Costs like the
+// accurate model, and is for the plans that have it ("diarize" in the plan's JSON, by default whoever has "strong").
+async function transcribeBySpeaker(request, env, store, user, url) {
+  const lang = /^[a-z]{2}$/.test(url.searchParams.get('lang') || '') ? url.searchParams.get('lang') : '';
+  const length = Number(request.headers.get('Content-Length'));
+  if (!request.body || !Number.isFinite(length) || length <= 44) return json({ error: 'bad_request', message: 'קובץ ריק' }, 400);
+  if (length > MAX_UPLOAD_BYTES + (MAX_REFS + 1) * 340000) return json({ error: 'too_large', message: 'קטע גדול מדי' }, 413);
+  const ent = await entitlement(env, store, user);
+  if (!ent.plan.diarize) {
+    request.body.cancel().catch(() => {});
+    return json({ error: 'upgrade', message: 'זיהוי דוברים זמין בתוכניות בתשלום' }, 403);
+  }
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: 'bad_request', message: 'הבקשה לא תקינה' }, 400); }
+  const file = form.get('file');
+  if (!file || typeof file === 'string' || file.size > MAX_UPLOAD_BYTES) return json({ error: 'bad_request', message: 'קובץ חסר או גדול מדי' }, 400);
+  const wav = parseWavHeader(new Uint8Array(await file.slice(0, 44).arrayBuffer()), file.size);
+  if (!wav) return json({ error: 'bad_format', message: 'פורמט שמע לא תקין' }, 400);
+
+  const known = [];
+  const names = form.getAll('ref_name'), refs = form.getAll('ref');
+  for (let i = 0; i < Math.min(MAX_REFS, refs.length); i++) {
+    const f = refs[i];
+    if (!f || typeof f === 'string' || !/^spk[1-9]$/.test(String(names[i]))) continue;
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const w = parseWavHeader(bytes, bytes.length);
+    if (w && w.seconds >= REF_MIN_SECONDS && w.seconds <= REF_MAX_SECONDS) known.push({ name: String(names[i]), bytes });
+  }
+
+  const credits = (wav.seconds / 60) * STRONG_WEIGHT;
+  const reservation = await store.reserve(user.email, ent.periodStart, ent.plan.credits, 'strong', wav.seconds, credits, extraTotals(ent).usable);
+  if (!reservation.ok) {
+    const message = ent.packs.eligible
+      ? 'נגמרו הדקות לחודש הזה. אפשר לקנות חבילת דקות נוספות בדף המחירים'
+      : ent.plan.credits > 0 ? 'נגמרו הדקות בתוכנית שלך לחודש הזה' : 'נגמרו דקות המתנה. כדי להמשיך לתמלל, בחרו תוכנית';
+    return json({ error: 'quota', message, used: reservation.used, limit: ent.plan.credits, packs: reservation.packs }, 402);
+  }
+  try {
+    const r = await diarizeWav(env, { model: modelIds(env).diarize, language: lang, file, known });
+    return json({ ...r, used: reservation.used, limit: ent.plan.credits });
+  } catch (e) {
+    await store.release(reservation.id);
+    console.error('diarized transcription failed', e.message);
+    return json({ error: 'transcription_failed', message: e.message }, 502);
+  }
+}
+
+// A YouTube link: the audio comes from the download service (src/youtube.js) and goes to the browser, which
+// prepares and transcribes it like an uploaded file (so the quota, the model and the speakers work the same).
+async function youtubeFetch(request, env, store, user, url) {
+  if (!youtubeConfigured(env)) return json({ error: 'not_configured', message: 'היבוא מיוטיוב עוד לא מופעל באתר' }, 501);
+  const ent = await entitlement(env, store, user);
+  const unlimited = !!ent.plan.unlimited;
+  const used = await store.usedSince(user.email, ent.periodStart);
+  const left = unlimited ? Infinity : ent.plan.credits - used + (await store.packBalance(user.email, extraTotals(ent).usable));
+  if (left <= 0.01) return json({ error: 'quota', message: 'נגמרו הדקות. כדי לתמלל סרטון, בחרו תוכנית' }, 402);
+  if (!(await store.allowEmail('yt:' + user.email, 30))) return json({ error: 'rate_limited', message: 'הבאת יותר מדי סרטונים היום' }, 429);
+  const r = await youtubeAudio(env, url.searchParams.get('url') || '', unlimited ? 0 : Math.ceil(left * 60));
+  if (r.error) return json({ error: r.code || 'youtube', message: r.error }, r.status || 502);
+  return new Response(r.body, { headers: { ...r.headers, 'Cache-Control': 'no-store' } });
 }
 
 async function readAtLeast(reader, n) {

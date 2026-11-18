@@ -63,3 +63,47 @@ export async function transcribeWav(env, { model, language, prompt, head, reader
   if (!res.ok) throw new Error('OpenAI: ' + (data?.error?.message || res.status));
   return (data?.text || '').trim();
 }
+
+// ---------- by speakers ----------
+//
+// OpenAI's diarization model returns the talk as segments with a speaker label each. Unlike transcribeWav this one
+// buffers the piece (it is at most MAX_UPLOAD_BYTES) because it arrives as a form: the audio, and up to four short
+// clips of speakers already heard in an earlier piece (known_speaker_references), so that "the same voice" keeps one
+// label from piece to piece. Not every account/model accepts every option, so a refusal is retried with less.
+
+export const MAX_REFS = 4;
+export const REF_MIN_SECONDS = 1.5, REF_MAX_SECONDS = 10.5;
+
+function base64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+export async function diarizeWav(env, { model, language, file, known }) {
+  const attempt = async ({ withKnown, withLanguage }) => {
+    const form = new FormData();
+    form.set('model', model);
+    form.set('response_format', 'diarized_json');
+    form.set('chunking_strategy', 'auto');
+    if (withLanguage && language) form.set('language', language);
+    form.set('file', file, 'audio.wav');
+    if (withKnown) {
+      for (const k of known) {
+        form.append('known_speaker_names[]', k.name);
+        form.append('known_speaker_references[]', 'data:audio/wav;base64,' + base64(k.bytes));
+      }
+    }
+    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + env.OPENAI_API_KEY }, body: form });
+    return { res, data: await res.json().catch(() => null) };
+  };
+  let opts = { withKnown: known.length > 0, withLanguage: !!language };
+  let r = await attempt(opts);
+  if (!r.res.ok && r.res.status === 400 && opts.withKnown) { opts = { ...opts, withKnown: false }; r = await attempt(opts); }
+  if (!r.res.ok && r.res.status === 400 && opts.withLanguage) { opts = { ...opts, withLanguage: false }; r = await attempt(opts); }
+  if (!r.res.ok) throw new Error('OpenAI: ' + (r.data?.error?.message || r.res.status));
+  const segments = (r.data?.segments || [])
+    .map(s => ({ speaker: String(s.speaker ?? ''), start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
+    .filter(s => s.text);
+  return { text: String(r.data?.text || segments.map(s => s.text).join(' ')).trim(), segments, usedKnown: opts.withKnown };
+}

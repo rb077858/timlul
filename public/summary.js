@@ -3,6 +3,8 @@
 // and Word are read here in the browser (their text only); PDFs and images go to OpenAI as files.
 // The summary is paid from the minutes quota by what it cost (src/summary.js).
 
+import { buildDoc } from './export.js';
+
 let d = null;           // helpers from app.js
 let files = [];         // { name, kind: 'pdf' | 'image' | 'text', file, pages, text, size }
 let lastText = '';      // the summary shown, for download / copy / email
@@ -22,7 +24,7 @@ export function initSummary(deps) {
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles([...e.dataTransfer.files]); });
   $('summaryBtn').onclick = () => generate();
-  $('sumDownload').onclick = () => d.download(lastText, (currentName() || 'transcript') + ' - סיכום');
+  d.bindExport($('sumExport'), () => buildDoc('summary', lastText, { title: (currentName() || 'תמלול') + ' - סיכום' }));
   $('sumCopy').onclick = async () => {
     try { await navigator.clipboard.writeText(lastText); d.toast('הסיכום הועתק'); } catch { d.toast('לא הצלחנו להעתיק'); }
   };

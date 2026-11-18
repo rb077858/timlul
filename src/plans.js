@@ -54,5 +54,7 @@ export function modelIds(env) {
   return {
     fast: env.MODEL_FAST || 'gpt-4o-mini-transcribe',
     strong: env.MODEL_STRONG || 'gpt-4o-transcribe',
+    // Splits the talk by speaker. OpenAI's only model that does (a deprecation is announced for February 2027).
+    diarize: env.MODEL_DIARIZE || 'gpt-4o-transcribe-diarize',
   };
 }
