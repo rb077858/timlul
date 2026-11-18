@@ -2,6 +2,7 @@ import { decodeToMono, planChunks, encodeWav } from './audio.js';
 import { initSummary } from './summary.js';
 import { buildDoc, exportDoc, speakersOf, SPEAKER_COLORS } from './export.js';
 import { transcribeBySpeaker } from './speakers.js';
+import { initTranslate } from './translate.js';
 
 const $ = id => document.getElementById(id);
 const CONCURRENCY = 3;
@@ -409,6 +410,9 @@ function bindWorkspace() {
 
   $('startBtn').onclick = start;
   initSummary({ $, me: () => me, config: () => config, api, toast, bindExport, el, fmtDate, history: loadHistory, refreshMe, renderQuota });
+  const bound = new WeakSet();
+  const bindExportOnce = (menu, get) => { menu.__get = get; if (!bound.has(menu)) { bound.add(menu); bindExport(menu, () => menu.__get()); } };
+  initTranslate({ $, me: () => me, config: () => config, api, toast, refreshMe, renderQuota, bindExportOnce });
   bindExport($('exportMenu'), () => buildDoc('transcript', $('resultText').value, { title: $('resultText').dataset.name || 'תמלול', seconds: Number($('resultText').dataset.seconds) || 0 }));
   $('resultText').addEventListener('change', renderSpeakers);
   $('diarize').onchange = syncModelChoice;
@@ -587,6 +591,8 @@ async function uploadChunk(blob, { kind, lang, hint }) {
 
 function showResult(text, name, seconds, partial, extraNote = '') {
   $('summaryCard').hidden = true;
+  $('translateCard').hidden = true;
+  $('trOut').hidden = true;
   $('resultText').value = text;
   $('resultText').dataset.name = name;
   $('resultText').dataset.seconds = String(Math.round(seconds || 0));
@@ -850,6 +856,8 @@ function renderHistory() {
     const open = el('button', 'btn btn-ghost btn-sm', 'פתיחה');
     open.onclick = () => {
       $('summaryCard').hidden = true;
+      $('translateCard').hidden = true;
+      $('trOut').hidden = true;
       $('resultText').value = h.text;
       $('resultText').dataset.name = h.name;
       $('resultText').dataset.seconds = String(h.seconds || 0);

@@ -1,6 +1,7 @@
 import { STRONG_WEIGHT, COST_PER_MINUTE, PLAN_DEFAULTS, modelIds } from './plans.js';
 import { transcribeWav, diarizeWav, parseWavHeader, MAX_UPLOAD_BYTES, MAX_REFS, REF_MIN_SECONDS, REF_MAX_SECONDS } from './openai.js';
 import { youtubeAudio, youtubeConfigured } from './youtube.js';
+import { translate, TRANSLATE_LANGS } from './translate.js';
 import { sendTranscriptEmail } from './mail.js';
 import { authenticate, userPlan, clientId } from './sso.js';
 import { adminManifest, adminAction } from './admin.js';
@@ -71,6 +72,13 @@ async function route(request, env, url) {
     return json(r.data, r.status);
   }
 
+  if (path === '/api/translate' && method === 'POST') {
+    const ent = await entitlement(env, store, user);
+    const reserveFor = credits => store.reserve(user.email, ent.periodStart, ent.plan.credits, 'summary', 0, credits, extraTotals(ent).usable);
+    const r = await translate(request, env, store, user, ent, reserveFor);
+    return json(r.data, r.status);
+  }
+
   if (path.startsWith('/api/admin/')) {
     if (!isAdmin(env, user)) return json({ error: 'forbidden', message: 'אין הרשאת מנהל' }, 403);
     if (path === '/api/admin/manifest' && method === 'GET') return json(await adminManifest(env, store));
@@ -121,6 +129,7 @@ function publicConfig(env) {
     maxUploadBytes: MAX_UPLOAD_BYTES,
     // A link to a YouTube video can be transcribed when a download service is connected (src/youtube.js).
     youtube: youtubeConfigured(env),
+    translateLanguages: TRANSLATE_LANGS,
     // Fallbacks for plans whose JSON in the dashboard doesn't set minutes/strong/email.
     planDefaults: PLAN_DEFAULTS,
     // AI summary styles: { id: label }, and how big a file may be.
@@ -160,7 +169,7 @@ async function accountState(env, store, user) {
     user: { email: user.email, name: user.name },
     plan: { key: ent.plan.key, name: ent.plan.name, credits: unlimited ? null : ent.plan.credits },
     unlimited,
-    features: { strong: !!ent.plan.strong, email: !!ent.plan.email, diarize: !!ent.plan.diarize },
+    features: { strong: !!ent.plan.strong, email: !!ent.plan.email, diarize: !!ent.plan.diarize, translate: ent.plan.translate !== false },
     // AI summaries: what this plan may do, and whether the one trial summary is still there.
     summary: (l => {
       // addons: what is left of the summaries / attachable files the site gave this user on top of the plan.

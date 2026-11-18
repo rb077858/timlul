@@ -62,6 +62,13 @@ async function mock(req) {
   }
   if (url.host === 'api.openai.com' && url.pathname === '/v1/responses') {
     const body = await req.json();
+    if (body.text?.format?.name === 'translation') {
+      translateCalls.push(body);
+      if (translateMode === 'fail') return Response.json({ error: { message: 'boom' } }, { status: 500 });
+      const items = JSON.parse(body.input[0].content[0].text);
+      const out = translateMode === 'short' ? items.slice(1) : items.map(x => (x ? 'EN:' + x : ''));
+      return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ items: out }) }] }], usage: { input_tokens: 800, output_tokens: 900 } });
+    }
     summaryCalls.push(body);
     if (openaiFails) return Response.json({ error: { message: 'boom' } }, { status: 500 });
     return Response.json({ status: 'completed', output: [{ type: 'reasoning' }, { type: 'message', content: [{ type: 'output_text', text: '## סיכום\n- נקודה ראשונה' }] }],
@@ -100,6 +107,8 @@ async function mock(req) {
 }
 
 let fileN = 0;
+const translateCalls = [];
+let translateMode = null;
 const ytCalls = [];
 const diarizeCalls = [];
 let diarizeMode = null;
@@ -168,7 +177,7 @@ test('free plan: quota, fast model only, streaming to OpenAI', async () => {
   let m = await me(user);
   assert.equal(m.plan.key, 'free');
   assert.equal(m.remaining, 10);
-  assert.deepEqual(m.features, { strong: false, email: false, diarize: false });
+  assert.deepEqual(m.features, { strong: false, email: false, diarize: false, translate: true });
 
   let res = await transcribe(user, 60);
   assert.equal(res.status, 200);
@@ -209,7 +218,7 @@ test('the plan, its minutes and its features come from reem.bi', async () => {
   assert.equal(m.plan.key, 'pro');
   assert.equal(m.plan.name, 'Pro');
   assert.equal(m.plan.credits, 700, 'minutes from the plan JSON');
-  assert.deepEqual(m.features, { strong: true, email: true, diarize: true }, 'defaults for pro');
+  assert.deepEqual(m.features, { strong: true, email: true, diarize: true, translate: true }, 'defaults for pro');
   assert.equal(m.planExpiresAt, exp * 1000);
   assert.equal(m.subscription.status, 'ACTIVE');
   assert.equal((await transcribe('e@example.com', 60, 'strong')).status, 200);
@@ -221,7 +230,7 @@ test('the plan, its minutes and its features come from reem.bi', async () => {
   dash['g@example.com'] = { override: { minutes: 50, email: true } };
   m = await me('g@example.com');
   assert.equal(m.plan.credits, 50, 'personal permissions');
-  assert.deepEqual(m.features, { strong: false, email: true, diarize: false });
+  assert.deepEqual(m.features, { strong: false, email: true, diarize: false, translate: true });
 
   // After paying, the site asks with ?fresh=1 and sees the new plan right away.
   dash['g@example.com'] = { plan: 'timlul:basic' };
@@ -235,7 +244,7 @@ test('unlimited: the hidden plan or a personal permission', async () => {
   assert.equal(m.unlimited, true);
   assert.equal(m.plan.name, 'ללא הגבלה');
   assert.equal(m.remaining, null);
-  assert.deepEqual(m.features, { strong: true, email: true, diarize: true });
+  assert.deepEqual(m.features, { strong: true, email: true, diarize: true, translate: true });
   for (let i = 0; i < 4; i++) assert.equal((await transcribe('vip@example.com', 5 * 60, 'strong')).status, 200);
   assert.equal((await me('vip@example.com')).used, 40, 'usage is still recorded for the cost stats');
 
@@ -344,7 +353,7 @@ test('no free plan: a new user has only the welcome gift, fast model, no email',
   assert.equal(m.plan.name, 'ללא מנוי');
   assert.equal(m.plan.credits, 0);
   assert.equal(m.remaining, 10);
-  assert.deepEqual(m.features, { strong: false, email: false, diarize: false });
+  assert.deepEqual(m.features, { strong: false, email: false, diarize: false, translate: true });
   assert.equal((await transcribe(user, 60, 'strong')).status, 403, 'fast model only');
   assert.equal((await transcribe(user, 9 * 60)).status, 200);
   m = await me(user);
@@ -661,4 +670,45 @@ test('YouTube: a link is turned into audio by the download service, with the quo
   assert.equal(none.status, 402);
   assert.equal(ytCalls.length, n + 1);
   assert.equal((await mf.dispatchFetch(BASE + '/api/youtube?url=x')).status, 401);
+});
+
+test('translation: parts come back in order, paid by what it cost, refused when there is nothing to pay with', async () => {
+  const tr = (email, body) => post('/api/translate', email, body);
+  dash['t1@example.com'] = { plan: 'timlul:basic' };
+  const before = (await me('t1@example.com')).used;
+  let res = await tr('t1@example.com', { to: 'en', items: ['שלום', '', 'מה נשמע'] });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.deepEqual(data.items, ['EN:שלום', '', 'EN:מה נשמע']);
+  assert.ok(data.credits >= 1);
+  const c = translateCalls.at(-1);
+  assert.match(c.instructions, /into English/);
+  assert.equal(c.text.format.type, 'json_schema');
+  assert.equal(c.store, false);
+  assert.equal(Math.round(((await me('t1@example.com', true)).used - before) * 100) / 100, data.credits, 'the quota is charged the real cost');
+  // bad requests
+  assert.equal((await tr('t1@example.com', { to: 'xx', items: ['a'] })).status, 400);
+  assert.equal((await tr('t1@example.com', { to: 'en', items: [' ', ''] })).status, 400);
+  assert.equal((await tr('t1@example.com', { to: 'en', items: ['א'.repeat(13000)] })).status, 413);
+  assert.equal((await mf.dispatchFetch(BASE + '/api/translate', { method: 'POST', body: '{}' })).status, 401);
+  // OpenAI returns a different number of parts: tried again once, then nothing is charged
+  translateMode = 'short';
+  const n = translateCalls.length;
+  const used = (await me('t1@example.com', true)).used;
+  res = await tr('t1@example.com', { to: 'en', items: ['א', 'ב'] });
+  assert.equal(res.status, 502);
+  assert.equal(translateCalls.length, n + 2);
+  assert.equal((await me('t1@example.com', true)).used, used, 'a failed translation is free');
+  translateMode = 'fail';
+  assert.equal((await tr('t1@example.com', { to: 'en', items: ['א'] })).status, 502);
+  translateMode = null;
+  // no minutes at all
+  dash['t2@example.com'] = { plan: null };
+  assert.equal((await tr('t2@example.com', { to: 'en', items: ['א'] })).status, 402);
+  // a plan can switch it off
+  dash['t3@example.com'] = { plan: 'timlul:basic', override: { translate: false } };
+  assert.equal((await tr('t3@example.com', { to: 'en', items: ['א'] })).status, 403);
+  assert.equal((await me('t3@example.com')).features.translate, false);
+  const cfg = await (await mf.dispatchFetch(BASE + '/api/config')).json();
+  assert.equal(cfg.translateLanguages.en, 'אנגלית');
 });

@@ -40,6 +40,7 @@ function pickFeatures(f) {
   if (f.minutes !== null && f.minutes !== '' && Number.isFinite(Number(f.minutes)) && Number(f.minutes) >= 0) out.credits = Number(f.minutes);
   if (typeof f.strong === 'boolean') out.strong = f.strong;
   if (typeof f.email === 'boolean') out.email = f.email;
+  if (typeof f.translate === 'boolean') out.translate = f.translate; // translating a transcript (on unless the plan says false)
   if (typeof f.diarize === 'boolean') out.diarize = f.diarize; // by speakers; without this, whoever has the accurate model has it
   if (Number.isFinite(Number(f.summary)) && f.summary !== null && f.summary !== '') out.summary = Math.max(0, Math.min(3, Math.round(Number(f.summary))));
   return out;

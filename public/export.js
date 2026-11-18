@@ -10,7 +10,7 @@
 //   what they said
 // Anything else is plain paragraphs (one per line). A summary is the markdown the AI wrote: #, - and **bold**.
 
-const SPEAKER_HEAD = /^(.{1,40}?) · (\d{1,2}:\d{2}(?::\d{2})?)$/;
+export const SPEAKER_HEAD = /^(.{1,40}?) · (\d{1,2}:\d{2}(?::\d{2})?)$/;
 export const SPEAKER_COLORS = ['1A1814', 'B8402B', '2C6A45', '2B5C8A', '7A4E9C', 'A06A12'];
 
 export const fmtTime = sec => {
@@ -61,28 +61,40 @@ function summaryBlocks(md) {
   return blocks;
 }
 
-/** kind: 'transcript' | 'summary'. info: { title, seconds, date, note }. */
+// The page is right-to-left for Hebrew and Arabic, left-to-right for everything else (a translation into English...).
+export const RTL_LANGS = ['he', 'ar', 'fa', 'ur'];
+const LABELS = {
+  he: { transcript: 'תמלול', summary: 'סיכום', date: 'תאריך', duration: 'משך', speakers: 'דוברים', note: 'הערה', page: 'עמוד', underMinute: 'פחות מדקה', locale: 'he-IL' },
+  en: { transcript: 'Transcript', summary: 'Summary', date: 'Date', duration: 'Duration', speakers: 'Speakers', note: 'Note', page: 'Page', underMinute: 'under a minute', locale: 'en-GB' },
+};
+
+/** kind: 'transcript' | 'summary'. info: { title, seconds, date, note, lang } (lang: the language of the text, 'he' by default). */
 export function buildDoc(kind, text, info = {}) {
+  const lang = info.lang || 'he';
+  const L = LABELS[lang] || LABELS.en;
   const blocks = kind === 'summary' ? summaryBlocks(text) : transcriptBlocks(text);
   const speakers = kind === 'summary' ? [] : speakersOf(text);
   const date = new Date(info.date || Date.now());
   const meta = [];
-  meta.push(['תאריך', date.toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' })]);
-  if (info.seconds > 0) meta.push(['משך', info.seconds < 60 ? 'פחות מדקה' : fmtDuration(info.seconds)]);
-  if (speakers.length) meta.push(['דוברים', speakers.join(', ')]);
-  if (info.note) meta.push(['הערה', info.note]);
+  meta.push([L.date, date.toLocaleDateString(L.locale, { day: 'numeric', month: 'long', year: 'numeric' })]);
+  if (info.seconds > 0) meta.push([L.duration, info.seconds < 60 ? L.underMinute : fmtDuration(info.seconds, lang)]);
+  if (speakers.length) meta.push([L.speakers, speakers.join(', ')]);
+  if (info.note) meta.push([L.note, info.note]);
   return {
-    kind,
-    title: String(info.title || (kind === 'summary' ? 'סיכום' : 'תמלול')).slice(0, 200),
-    label: kind === 'summary' ? 'סיכום' : 'תמלול',
+    kind, lang,
+    dir: RTL_LANGS.includes(lang) ? 'rtl' : 'ltr',
+    page: L.page,
+    title: String(info.title || (kind === 'summary' ? L.summary : L.transcript)).slice(0, 200),
+    label: kind === 'summary' ? L.summary : L.transcript,
     md: kind === 'summary', // **bold** is the AI's markup in a summary; in a transcript an asterisk is just an asterisk
     meta,
     blocks,
   };
 }
 
-function fmtDuration(sec) {
+function fmtDuration(sec, lang = 'he') {
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  if (lang !== 'he') return h ? `${h} h${m ? ' ' + m + ' min' : ''}` : `${m} min`;
   return h ? `${h} שעות${m ? ' ו-' + m + ' דקות' : ''}` : `${m} דקות`;
 }
 
@@ -100,10 +112,12 @@ const HEB = /[֐-׿]/;
 // Fonts every Word has with Hebrew; the site's own web fonts aren't on the reader's computer.
 const BODY = 'Arial', HEAD = 'David';
 
-function rPr({ bold, size, color, font, italic, mono } = {}) {
+let RTL = true; // set by docxFiles for the document being made (the file is built in one go, synchronously)
+function rPr({ bold, size, color, font, italic, mono, fill } = {}) {
   const f = mono ? 'Consolas' : font || BODY;
   return `<w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}"/>${bold ? '<w:b/><w:bCs/>' : ''}${italic ? '<w:i/><w:iCs/>' : ''}` +
-    `${color ? `<w:color w:val="${color}"/>` : ''}${size ? `<w:sz w:val="${size * 2}"/><w:szCs w:val="${size * 2}"/>` : ''}<w:rtl/><w:lang w:val="he-IL" w:bidi="he-IL"/></w:rPr>`;
+    `${color ? `<w:color w:val="${color}"/>` : ''}${size ? `<w:sz w:val="${size * 2}"/><w:szCs w:val="${size * 2}"/>` : ''}` +
+    `${fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : ''}${RTL ? '<w:rtl/>' : ''}<w:lang w:val="${RTL ? 'he-IL' : 'en-US'}" w:bidi="he-IL"/></w:rPr>`;
 }
 const run = (text, o) => `<w:r>${rPr(o)}<w:t xml:space="preserve">${xml(text)}</w:t></w:r>`;
 
@@ -117,14 +131,14 @@ function runsOf(text, o = {}, md = true) {
 }
 
 const para = (inner, { ppr = '', after = 120, line = 360, keep = false } = {}) =>
-  `<w:p><w:pPr>${keep ? '<w:keepNext/>' : ''}<w:bidi/>${ppr}<w:spacing w:after="${after}" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${inner}</w:p>`;
+  `<w:p><w:pPr>${keep ? '<w:keepNext/>' : ''}${ppr}${RTL ? '<w:bidi/>' : ''}<w:spacing w:after="${after}" w:line="${line}" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${inner}</w:p>`;
 // jc "left" in a right-to-left paragraph is the start of the line, which is the right side of the page.
 
 function docxBody(doc) {
   const out = [];
   const runs = (t, o) => runsOf(t, o, !!doc.md);
   // brand tag, with the highlighter behind it
-  out.push(para(`<w:r>${rPr({ bold: true, size: 10, color: '1A1814' }).replace('<w:rtl/>', '<w:shd w:val="clear" w:color="auto" w:fill="F5D63F"/><w:rtl/>')}<w:t xml:space="preserve"> תמלולי · ${xml(doc.label)} </w:t></w:r>`, { after: 160 }));
+  out.push(para(`<w:r>${rPr({ bold: true, size: 10, color: '1A1814', fill: 'F5D63F' })}<w:t xml:space="preserve"> תמלולי · ${xml(doc.label)} </w:t></w:r>`, { after: 160 }));
   out.push(para(run(doc.title, { bold: true, size: 26, font: HEAD, color: '1A1814' }), { after: 100, line: 300 }));
   for (const [k, v] of doc.meta) out.push(para(run(k + ': ', { size: 10.5, color: '7A7466', bold: true }) + run(v, { size: 10.5, color: '5B5649' }), { after: 20, line: 276 }));
   // a rule under the heading block
@@ -145,16 +159,18 @@ function docxBody(doc) {
 const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
 
 export function docxFiles(doc) {
-  const footer = `<w:ftr ${NS}><w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr>` +
-    run(doc.title.slice(0, 60) + '  ·  עמוד ', { size: 9, color: '7A7466' }) +
+  RTL = doc.dir !== 'ltr';
+  const bidi = RTL ? '<w:bidi/>' : '';
+  const footer = `<w:ftr ${NS}><w:p><w:pPr>${bidi}<w:jc w:val="center"/></w:pPr>` +
+    run(doc.title.slice(0, 60) + `  ·  ${doc.page || 'עמוד'} `, { size: 9, color: '7A7466' }) +
     `<w:r>${rPr({ size: 9, color: '7A7466' })}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${rPr({ size: 9, color: '7A7466' })}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>` +
     `<w:r>${rPr({ size: 9, color: '7A7466' })}<w:fldChar w:fldCharType="separate"/></w:r>${run('1', { size: 9, color: '7A7466' })}<w:r>${rPr({ size: 9, color: '7A7466' })}<w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>`;
   return {
     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`,
     '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`,
     'word/_rels/document.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>`,
-    'word/document.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${docxBody(doc)}<w:sectPr><w:footerReference w:type="default" r:id="rId4"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1247" w:bottom="1134" w:left="1247" w:header="567" w:footer="567" w:gutter="0"/><w:bidi/></w:sectPr></w:body></w:document>`,
-    'word/styles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${BODY}" w:hAnsi="${BODY}" w:cs="${BODY}"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="he-IL" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>`,
+    'word/document.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${docxBody(doc)}<w:sectPr><w:footerReference w:type="default" r:id="rId4"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1247" w:bottom="1134" w:left="1247" w:header="567" w:footer="567" w:gutter="0"/>${bidi}</w:sectPr></w:body></w:document>`,
+    'word/styles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${BODY}" w:hAnsi="${BODY}" w:cs="${BODY}"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="${RTL ? 'he-IL' : 'en-US'}" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>${bidi}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style></w:styles>`,
     'word/settings.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/><w:themeFontLang w:val="en-US" w:bidi="he-IL"/></w:settings>`,
     'word/numbering.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="540" w:hanging="300"/></w:pPr><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:color w:val="B8402B"/></w:rPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`,
     'word/footer1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${footer}`,
@@ -229,7 +245,7 @@ export function printHtml(doc) {
   }
   if (list) body += '</ul>';
   const meta = doc.meta.map(([k, v]) => `<div><dt>${html(k)}</dt><dd>${html(v)}</dd></div>`).join('');
-  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><title>${html(doc.title)}</title>
+  return `<!doctype html><html lang="${html(doc.lang || 'he')}" dir="${doc.dir === 'ltr' ? 'ltr' : 'rtl'}"><head><meta charset="utf-8"><title>${html(doc.title)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&family=Frank+Ruhl+Libre:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 @page { size: A4; margin: 20mm 18mm 22mm; @bottom-center { content: "${html(doc.title.slice(0, 50)).replace(/"/g, '')}  ·  " counter(page); font: 9pt Assistant, Arial, sans-serif; color: #7a7466; } }
@@ -243,11 +259,11 @@ dl div { display: flex; gap: 6px; } dt { font-weight: 700; color: #7a7466; } dt:
 .rule { height: 0; border-top: 2.5px solid #1a1814; margin: 0 0 20px; }
 p { margin: 0 0 11px; orphans: 3; widows: 3; text-align: start; }
 h2 { font: 700 15pt/1.3 'Frank Ruhl Libre', 'David', serif; margin: 22px 0 8px; padding-bottom: 3px; border-bottom: 1px solid #d4cbb7; break-after: avoid; }
-ul { margin: 0 0 12px; padding: 0 20px 0 0; } li { margin-bottom: 5px; } li::marker { color: #b8402b; }
+ul { margin: 0 0 12px; padding: 0; padding-inline-start: 20px; } li { margin-bottom: 5px; } li::marker { color: #b8402b; }
 .turn { margin: 0 0 13px; break-inside: avoid-page; }
-.who { display: flex; align-items: baseline; gap: 12px; background: #f3eee3; border-right: 3px solid var(--c); padding: 2px 11px; margin-bottom: 4px; break-after: avoid; }
+.who { display: flex; align-items: baseline; gap: 12px; background: #f3eee3; border-inline-start: 3px solid var(--c); padding: 2px 11px; margin-bottom: 4px; break-after: avoid; }
 .who b { color: var(--c); font-size: 11.5pt; } .who time { font: 400 9pt 'IBM Plex Mono', Consolas, monospace; color: #7a7466; direction: ltr; }
-.turn p { margin: 0 14px 0 0; }
+.turn p { margin: 0; margin-inline-start: 14px; }
 strong { font-weight: 700; }
 </style></head><body>
 <span class="tag">תמלולי · ${html(doc.label)}</span>

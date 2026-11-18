@@ -198,8 +198,47 @@
           <button id="emailBtn" class="btn btn-ghost">שליחה למייל שלי</button>
           <button id="copyBtn" class="btn btn-ghost">העתקה</button>
           <button id="summaryOpen" class="btn btn-ai">סיכום AI</button>
+          <button id="translateOpen" class="btn btn-ghost">תרגום</button>
         </div>
         <p id="resultNote" class="notice" hidden></p>
+      </div>
+
+      <div id="translateCard" class="card" hidden>
+        <div class="result-head">
+          <h2>תרגום</h2>
+          <span class="muted small" id="trFor"></span>
+          <button id="trClose" class="link-btn" type="button" aria-label="סגירה">סגירה</button>
+        </div>
+        <div class="row tr-form">
+          <label class="field">
+            <span>לתרגם ל</span>
+            <select id="trLang"></select>
+          </label>
+          <div class="tr-go">
+            <span class="muted small" id="trCost"></span>
+            <button id="trBtn" class="btn btn-primary" type="button">תרגום</button>
+          </div>
+        </div>
+        <div id="trProgress" class="progress" hidden>
+          <div class="bar"><div class="bar-fill" id="trProgressBar"></div></div>
+          <div class="muted small" id="trProgressText"></div>
+        </div>
+        <p id="trError" class="notice notice-error" hidden></p>
+        <div id="trOut" hidden>
+          <div class="muted small" id="trMeta"></div>
+          <textarea id="trText" rows="12"></textarea>
+          <div class="actions">
+            <div class="export" id="trExport">
+              <button class="btn btn-primary" type="button" data-export-toggle aria-haspopup="true" aria-expanded="false">הורדה ▾</button>
+              <div class="export-list" role="menu" hidden>
+                <button type="button" role="menuitem" data-format="docx"><b>Word</b><span class="muted small">מסמך מעוצב</span></button>
+                <button type="button" role="menuitem" data-format="pdf"><b>PDF</b><span class="muted small">נפתח חלון הדפסה, שם בוחרים "שמירה כ-PDF"</span></button>
+                <button type="button" role="menuitem" data-format="txt"><b>טקסט</b><span class="muted small">קובץ TXT פשוט</span></button>
+              </div>
+            </div>
+            <button id="trCopy" class="btn btn-ghost" type="button">העתקה</button>
+          </div>
+        </div>
       </div>
 
       <div id="summaryCard" class="card summary-card" hidden>

@@ -73,3 +73,37 @@ test('export: the model, plain text, and a valid Word file', async () => {
   const sum = buildDoc('summary', '# כותרת\n- **נקודה** א\n1. ב\nפסקה', { title: 's' });
   assert.deepEqual(sum.blocks.map(b => b.t), ['h', 'li', 'li', 'p']);
 });
+
+import { splitForTranslation, batchParts, translateText, estimateCredits } from '../public/translate.js';
+
+test('translation: the parts keep the speakers and times, long parts are cut and joined, batches stay small', async () => {
+  const text = 'דובר 1 · 00:00\nשלום לכולם\n\nדובר 2 · 00:05\nמה נשמע\n\nדנה · 00:09\nטוב';
+  const { parts, rebuild } = splitForTranslation(text, 'en');
+  assert.deepEqual(parts, ['שלום לכולם', 'מה נשמע', 'טוב']);
+  assert.equal(rebuild(['Hello everyone', "How's it going", 'Good']), 'Speaker 1 · 00:00\nHello everyone\n\nSpeaker 2 · 00:05\nHow\'s it going\n\nדנה · 00:09\nGood');
+  // plain text: line by line, blank lines stay
+  const plain = splitForTranslation('שורה א\n\nשורה ב', 'fr');
+  assert.deepEqual(plain.parts, ['שורה א', 'שורה ב']);
+  assert.equal(plain.rebuild(['Ligne A', 'Ligne B']), 'Ligne A\n\nLigne B');
+  // a very long line is cut at sentence ends and joined again
+  const long = ('זה משפט ארוך אחד. ').repeat(600).trim();
+  const l = splitForTranslation(long, 'en');
+  assert.ok(l.parts.length > 1 && l.parts.every(p => p.length <= 5000));
+  assert.equal(l.rebuild(l.parts), long);
+  // batches
+  const many = Array.from({ length: 10 }, () => 'א'.repeat(3000));
+  assert.deepEqual(batchParts(many).map(b => b.length), [2, 2, 2, 2, 2]);
+  assert.ok(estimateCredits(54000) > 5);
+  // the whole run: three requests at most in parallel, in order
+  let calls = 0;
+  const r = await translateText({ text: many.map((m, i) => i + m).join('\n'), to: 'en', send: async items => { calls++; return { items: items.map(x => 'T' + x.slice(0, 1)), credits: 2 }; } });
+  assert.equal(calls, 5);
+  assert.equal(r.credits, 10);
+  assert.equal(r.stopped, null);
+  assert.equal(r.text.split('\n').join(' '), '0 T1 T2 T3 T4 T5 T6 T7 T8 T9'.replace('0 ', 'T0 '));
+  // a failure keeps the rest in the original language
+  let n = 0;
+  const f = await translateText({ text: many.join('\n'), to: 'en', concurrency: 1, send: async items => { if (++n > 1) throw new Error('boom'); return { items: items.map(() => 'X'), credits: 1 }; } });
+  assert.equal(f.stopped.message, 'boom');
+  assert.equal(f.translated, 2);
+});
